@@ -3,6 +3,8 @@ package com.example.spotifywrapper
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.View
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -57,7 +59,21 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        binding.webView.webChromeClient = object : android.webkit.WebChromeClient() {
+        binding.webView.webChromeClient = object : WebChromeClient() {
+
+            // Supporto DRM/Widevine: senza questo, Spotify mostra
+            // "La riproduzione di contenuti protetti non è abilitata."
+            override fun onPermissionRequest(request: PermissionRequest) {
+                runOnUiThread {
+                    if (request.resources.contains(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID)) {
+                        request.grant(request.resources)
+                    } else {
+                        // Microfono, fotocamera, ecc.: negati
+                        request.deny()
+                    }
+                }
+            }
+
             override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
                 binding.progressBar.progress = newProgress
                 binding.progressBar.visibility =
