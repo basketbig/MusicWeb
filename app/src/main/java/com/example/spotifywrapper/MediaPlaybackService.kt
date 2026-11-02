@@ -1,11 +1,14 @@
 package com.example.spotifywrapper
 
+import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.os.Binder
 import android.os.Build
@@ -13,8 +16,11 @@ import android.os.IBinder
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.media.app.NotificationCompat as MediaNotificationCompat
 
 /**
@@ -33,7 +39,9 @@ class MediaPlaybackService : Service() {
     }
 
     companion object {
-        const val CHANNEL_ID = "spotify_wrapper_playback"
+        // Canale condiviso: MainActivity lo crea PRIMA di ogni startForegroundService,
+        // il servizio lo ricrea in onCreate (idempotente).
+        const val CHANNEL_ID = "media_playback_channel"
         const val NOTIFICATION_ID = 1001
 
         const val ACTION_PLAY_PAUSE = "com.example.spotifywrapper.PLAY_PAUSE"
@@ -51,11 +59,17 @@ class MediaPlaybackService : Service() {
 
         fun start(context: Context) {
             val intent = Intent(context, MediaPlaybackService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                ContextCompat.startForegroundService(context, intent)
+            } catch (e: Exception) {
+                // es. BackgroundServiceStartNotAllowedException su Android 12+
+                Log.w("MediaPlaybackService", "start failed", e)
             }
+        }
+
+        /** Arresta il servizio e rimuove la notifica. */
+        fun stop(context: Context) {
+            context.stopService(Intent(context, MediaPlaybackService::class.java))
         }
 
         /** Chiamato dal bridge JS quando la pagina cambia stato riproducibile. */
@@ -80,13 +94,9 @@ class MediaPlaybackService : Service() {
                 putExtra(EXTRA_IS_PLAYING, isPlaying)
             }
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
-                } else {
-                    context.startService(intent)
-                }
+                ContextCompat.startForegroundService(context, intent)
             } catch (e: Exception) {
-                android.util.Log.w("MediaPlaybackService", "start failed", e)
+                Log.w("MediaPlaybackService", "start failed", e)
             }
         }
 
@@ -108,6 +118,8 @@ class MediaPlaybackService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // 1) Il canale DEVE esistere prima di qualsiasi startForeground().
         createChannel()
 
         mediaSession = MediaSessionCompat(this, "SpotifyWrapperSession").apply {
@@ -128,22 +140,44 @@ class MediaPlaybackService : Service() {
 
         artworkLoader = ArtworkLoader(this)
 
-        // POST_NOTIFICATIONS su Android 13+: se negata la notifica non appare,
-        // ma il servizio foreground resta lecito.
-        // Il canale deve esistere PRIMA di startForeground (gia' creato in onCreate).
+        // 2) Entro 5 secondi dall'avvio del servizio bisogna chiamare
+        //    startForeground(), altrimenti ANR/crash.
         startForegroundCompat()
     }
 
     private fun startForegroundCompat() {
-        val notification = buildNotification()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        val hasNotifPermission =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        // Su Android 13+ senza permesso notifiche la notifica FGS non verrebbe
+        // mostrata: si procede comunque (il servizio foreground resta lecito),
+        // ma usiamo subito la notifica completa per il retry di fallback.
+        val notification = if (hasNotifPermission) buildNotification() else buildPlaceholderNotification()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10+: dichiara il tipo mediaPlayback (obbligatorio su 14).
+                // ServiceCompat gestisce le differenze tra release della piattaforma.
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: SecurityException) {
+            // Permesso FOREGROUND_SERVICE(_MEDIA_PLAYBACK) mancante o negato dal
+            // sistema: riprova con la firma base; se fallisce ancora, chiudi senza crash.
+            Log.w("MediaPlaybackService", "startForeground denied, retrying plain", e)
+            try {
+                startForeground(NOTIFICATION_ID, buildPlaceholderNotification())
+            } catch (e2: Exception) {
+                Log.e("MediaPlaybackService", "cannot go foreground, stopping", e2)
+                stopSelf()
+            }
         }
     }
 
@@ -153,7 +187,7 @@ class MediaPlaybackService : Service() {
             ACTION_PREV -> sendCommand("prev")
             ACTION_NEXT -> sendCommand("next")
             ACTION_STOP -> {
-                stopForeground(STOP_FOREGROUND_REMOVE)
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -294,6 +328,20 @@ class MediaPlaybackService : Service() {
         }
     }
 
+    /** Notifica base usata per mettere il servizio in foreground. */
+    private fun buildPlaceholderNotification(): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(getString(R.string.notif_playing))
+            .setContentText(currentArtist)
+            .setContentIntent(sessionActivityIntent())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+    }
+
     private fun sessionActivityIntent(): PendingIntent {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -316,7 +364,7 @@ class MediaPlaybackService : Service() {
         return PendingIntent.getService(this, action.hashCode(), intent, flags)
     }
 
-    private fun buildNotification(): android.app.Notification {
+    private fun buildNotification(): Notification {
         val playPauseAction = if (currentlyPlaying) {
             Triple(R.drawable.ic_pause, getString(R.string.notif_pause), ACTION_PLAY_PAUSE)
         } else {
