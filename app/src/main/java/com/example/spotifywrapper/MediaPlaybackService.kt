@@ -130,7 +130,21 @@ class MediaPlaybackService : Service() {
 
         // POST_NOTIFICATIONS su Android 13+: se negata la notifica non appare,
         // ma il servizio foreground resta lecito.
-        startForeground(NOTIFICATION_ID, buildNotification())
+        // Il canale deve esistere PRIMA di startForeground (gia' creato in onCreate).
+        startForegroundCompat()
+    }
+
+    private fun startForegroundCompat() {
+        val notification = buildNotification()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -194,27 +208,22 @@ class MediaPlaybackService : Service() {
             if (album.isNotBlank()) putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
             if (durationMs > 0) putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
         }
-        // La copertina resta quella del brano corrente: non sovrascriviamo
-        // con null durante i heartbeat di posizione dello stesso brano.
-        if (!changed) {
-            mediaSession.controller.metadata?.let { prev ->
-                prev.getBoolean(MediaMetadataCompat.METADATA_KEY_IMAGE_PREFERRED)?.let { pref ->
-                    if (pref == 1) {
-                        mdBuilder.putBitmap(
-                            MediaMetadataCompat.METADATA_KEY_ALBUM_ART,
-                            prev.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
-                        )
-                        mdBuilder.putBitmap(
-                            MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON,
-                            prev.getBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON)
-                        )
-                    }
-                }
+
+        // Copertina: la nuova vince; altrimenti, se il brano non e' cambiato,
+        // conserva quella gia' in sessione (gli heartbeat di posizione portano
+        // artwork=null e non devono cancellare l'immagine).
+        // Nota: METADATA_KEY_IMAGE_PREFERRED e' un int di tipo, non un boolean,
+        // e getBoolean() non esiste su BaseBundle: confrontiamo direttamente i bitmap.
+        val newArt = artwork
+            ?: if (!changed) {
+                mediaSession.controller.metadata
+                    ?.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
+            } else {
+                null
             }
-        }
-        artwork?.let {
-            mdBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, it)
-            mdBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, it)
+        if (newArt != null) {
+            mdBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, newArt)
+            mdBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, newArt)
         }
         mediaSession.setMetadata(mdBuilder.build())
 

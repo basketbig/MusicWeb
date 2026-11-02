@@ -23,29 +23,35 @@ class ArtworkLoader(context: Context) {
     }
 
     fun load(url: String, callback: (Bitmap?) -> Unit) {
-        if (!url.startsWith("http")) {
-            callback(null)
-            return
-        }
-        executor.execute {
-            try {
-                val file = downloadToCache(url)
-                if (file != null) {
-                    // Decodifica a dimensione ridotta: basta per la notifica
-                    val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeFile(file.absolutePath, opts)
-                    var sample = 1
-                    while (opts.outWidth / sample > TARGET_PX * 2) sample *= 2
-                    val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
-                    val bmp = BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
-                    handler.post { callback(bmp) }
-                } else {
+        // Guard difensiva: mai far crashare il servizio per un URL malformato.
+        try {
+            if (!url.startsWith("http")) {
+                callback(null)
+                return
+            }
+            executor.execute {
+                try {
+                    val file = downloadToCache(url)
+                    if (file != null) {
+                        // Decodifica a dimensione ridotta: basta per la notifica
+                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeFile(file.absolutePath, opts)
+                        var sample = 1
+                        while (opts.outWidth / sample > TARGET_PX * 2) sample *= 2
+                        val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sample }
+                        val bmp = BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
+                        handler.post { callback(bmp) }
+                    } else {
+                        handler.post { callback(null) }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "artwork fallita per $url", e)
                     handler.post { callback(null) }
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "artwork fallita per $url", e)
-                handler.post { callback(null) }
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "artwork: submit fallito", e)
+            callback(null)
         }
     }
 
