@@ -4,27 +4,33 @@ import android.content.Context
 import android.util.Log
 
 /**
- * Legge assets/inject.js una sola volta e lo restituisce come stringa pronta
- * per WebView.evaluateJavascript().
+ * Legge gli script di assets (inject.js + media_bridge.js), li combina una
+ * sola volta e li restituisce pronti per WebView.evaluateJavascript().
  */
 object JsInjector {
 
-    private const val ASSET_FILE = "inject.js"
     private const val TAG = "JsInjector"
+
+    /** Ordine di iniezione: anti-ads prima, ponte media dopo. */
+    private val ASSET_FILES = listOf("inject.js", "media_bridge.js")
 
     @Volatile
     private var cachedScript: String? = null
 
+    /** Script combinati, pronti per WebView.evaluateJavascript(). */
     fun getScript(context: Context): String? {
         cachedScript?.let { return it }
         synchronized(this) {
             cachedScript?.let { return it }
-            val script = try {
-                context.assets.open(ASSET_FILE).bufferedReader().use { it.readText() }
-            } catch (e: Exception) {
-                Log.e(TAG, "Impossibile leggere $ASSET_FILE", e)
-                null
+            val sb = StringBuilder()
+            for (name in ASSET_FILES) {
+                try {
+                    context.assets.open(name).bufferedReader().use { sb.append(it.readText()).append('\n') }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Impossibile leggere $name", e)
+                }
             }
+            val script = sb.toString().ifBlank { null }
             cachedScript = script
             return script
         }

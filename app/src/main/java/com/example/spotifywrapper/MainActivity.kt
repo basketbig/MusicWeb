@@ -1,7 +1,13 @@
 package com.example.spotifywrapper
 
 import android.annotation.SuppressLint
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.view.View
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -24,6 +30,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var binding: ActivityMainBinding
+    private var mediaService: MediaPlaybackService? = null
+    private var serviceBound = false
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            mediaService = (service as? MediaPlaybackService.LocalBinder)?.service
+            registerMediaDispatcher()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            mediaService = null
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +64,12 @@ class MainActivity : AppCompatActivity() {
             loadWithOverviewMode = true
             userAgentString = DESKTOP_UA
         }
+
+        // Bridge JS -> notifica media nativa (window.AndroidMediaBridge)
+        binding.webView.addJavascriptInterface(
+            AndroidMediaBridge(this),
+            AndroidMediaBridge.INTERFACE_NAME
+        )
 
         binding.webView.webViewClient = SpotifyWebViewClient(
             context = this,
@@ -101,6 +126,58 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** I pulsanti della notifica finiscono qui: esegue il JS nella WebView. */
+    private fun registerMediaDispatcher() {
+        MediaPlaybackService.dispatchToWebView = { js ->
+            runOnUiThread { binding.webView?.evaluateJavascript(js, null) }
+        }
+    }
+
+    private fun bindMediaService() {
+        if (serviceBound) return
+        val intent = Intent(this, MediaPlaybackService::class.java)
+        // BIND_AUTO_CREATE evita che il servizio venga distrutto quando l'activity
+        // si disconnette mentre la riproduzione e' ancora attiva.
+        serviceBound = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        // Il servizio foreground viene avviato dal bridge alla prima riproduzione:
+        // su Android 12+ un FGS mediaPlayback non puo' partire "a freddo"
+        // quando l'app e' gia' in primo piano senza audio attivo.
+    }
+
+    private fun unbindMediaService() {
+        if (serviceBound) {
+            try {
+                unbindService(serviceConnection)
+            } catch (_: Exception) {
+            }
+            serviceBound = false
+        }
+        mediaService = null
+    }
+
+    override fun onStart() {
+        super.onStart()
+        bindMediaService()
+        // Chiedi il permesso notifiche su Android 13+ al primo avvio
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.POST_NOTIFICATIONS
+            ).let { granted ->
+                if (granted != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(
+                        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                        AndroidMediaBridge.REQ_NOTIF_PERMISSION
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onStop() {
+        unbindMediaService()
+        super.onStop()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         val webState = Bundle()
@@ -119,6 +196,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        MediaPlaybackService.dispatchToWebView = null
+        unbindMediaService()
+        AndroidMediaBridge.resetServiceFlag()
         binding.webView.destroy()
         super.onDestroy()
     }

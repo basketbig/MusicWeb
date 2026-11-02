@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Spotify Wrapper</string>
+
+    <!-- Notifica media -->
+    <string name="notif_channel_name">Riproduzione</string>
+    <string name="notif_play">Play</string>
+    <string name="notif_pause">Pausa</string>
+    <string name="notif_prev">Brano precedente</string>
+    <string name="notif_next">Brano successivo</string>
 </resources>
