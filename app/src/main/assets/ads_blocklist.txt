@@ -1,0 +1,53 @@
+# ============================================================
+# Blocklist domini pubblicitari / tracking per Spotify Web Player
+# Formato: un dominio per riga. Righe vuote e righe che iniziano
+# con "#" vengono ignorate. Supportata la wildcard "*.esempio.com"
+# (matcha esempio.com e tutti i suoi sottodomini).
+# NOTA: spclient.wg.spotify.com serve anche per cover/metadati,
+# gateway-sink/spevent sono telemetria richiesta dal player:
+# restano commentati per non rompere il playback.
+# ============================================================
+
+# --- Ads & tracking (Google / DoubleClick) ---
+pubads.g.doubleclick.net
+securepubads.g.doubleclick.net
+googleads.g.doubleclick.net
+pagead2.googlesyndication.com
+*.googlesyndication.com
+doubleclick.net
+*.doubleclick.net
+googleadservices.com
+www.googleadservices.com
+*.googletagservices.com
+*.googletagmanager.com
+adservice.google.com
+adsystem.admeld.com
+
+# --- Ads Spotify diretti ---
+ads.spotify.com
+ads-fa.spotify.com
+
+# --- Tracking / analitica ---
+analytics.spotify.com
+scorecardresearch.com
+*.scorecardresearch.com
+bluecava.com
+*.bluecava.com
+metrics.scdn.co
+pixel.spotify.com
+livemetrics.spotify.com
+
+# --- Ad network generici ---
+*.taboola.com
+*.outbrain.com
+casmedia.io
+*.amazon-adsystem.com
+aax.amazon-adsystem.com
+
+# --- Domini "di confine": bloccarli puo' rompere il player.
+# Scommentare a proprio rischio e verificare il playback. ---
+# spclient.wg.spotify.com
+# gateway-sink.wg.spotify.com
+# spevent.spotify.com
+# audio-ak-spotify-com.akamaized.net
+# audio4-ak-spotify-com.akamaized.net
