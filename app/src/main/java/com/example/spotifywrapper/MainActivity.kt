@@ -50,6 +50,10 @@ class MainActivity : AppCompatActivity() {
 
         AdBlocker.init(applicationContext)
 
+        // Il canale di notifica DEVE esistere prima che il bridge chiami
+        // startForegroundService (es. avvio a freddo alla prima riproduzione).
+        createChannel()
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -129,16 +133,33 @@ class MainActivity : AppCompatActivity() {
     /** I pulsanti della notifica finiscono qui: esegue il JS nella WebView. */
     private fun registerMediaDispatcher() {
         MediaPlaybackService.dispatchToWebView = { js ->
-            runOnUiThread { binding.webView?.evaluateJavascript(js, null) }
+            runOnUiThread { binding.webView.evaluateJavascript(js, null) }
+        }
+    }
+
+    /** Canale di notifica: anticipato in onCreate per evitare crash su avvio a freddo. */
+    private fun createChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                MediaPlaybackService.CHANNEL_ID,
+                getString(R.string.notif_channel_name),
+                android.app.NotificationManager.IMPORTANCE_LOW
+            ).apply { setShowBadge(false) }
+            getSystemService(android.app.NotificationManager::class.java)
+                .createNotificationChannel(channel)
         }
     }
 
     private fun bindMediaService() {
-        if (serviceBound) return
         val intent = Intent(this, MediaPlaybackService::class.java)
-        // BIND_AUTO_CREATE evita che il servizio venga distrutto quando l'activity
-        // si disconnette mentre la riproduzione e' ancora attiva.
-        serviceBound = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        if (!serviceBound) {
+            // BIND_AUTO_CREATE evita che il servizio venga distrutto quando l'activity
+            // si disconnette mentre la riproduzione e' ancora attiva.
+            serviceBound = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
+        // Ri-allega sempre il dispatcher: dopo onStop/onDestroy il campo statico
+        // viene azzerato e i pulsanti della notifica resterebbero muti.
+        registerMediaDispatcher()
         // Il servizio foreground viene avviato dal bridge alla prima riproduzione:
         // su Android 12+ un FGS mediaPlayback non puo' partire "a freddo"
         // quando l'app e' gia' in primo piano senza audio attivo.
