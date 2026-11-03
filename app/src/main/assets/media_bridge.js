@@ -26,6 +26,37 @@
     }
 
     // ------------------------------------------------------------
+    // API pubbliche richieste dal servizio nativo / dalla pagina.
+    // Il servizio richiama window.playPause()/nextTrack()/previousTrack()
+    // come alias dei comandi interni (vedi __spotifyWrapperCmd).
+    // ------------------------------------------------------------
+    function exposeCommandApi() {
+        window.playPause = function () { window.__spotifyWrapperCmd('play'); };
+        window.pause = function () { window.__spotifyWrapperCmd('pause'); };
+        window.nextTrack = function () { window.__spotifyWrapperCmd('next'); };
+        window.previousTrack = function () { window.__spotifyWrapperCmd('prev'); };
+    }
+
+    // Bridge "AndroidBridge" alla lettera, come da specifica: wrapper sottile
+    // sopra AndroidMediaBridge che accetta metadati come argomenti separati.
+    window.AndroidBridge = {
+        updateMetadata: function (title, artist, isPlaying) {
+            if (!hasBridge()) return false;
+            var s = readState();
+            s.title = title || s.title;
+            s.artist = artist || s.artist;
+            if (typeof isPlaying === 'boolean') s.isPlaying = isPlaying;
+            try {
+                AndroidMediaBridge.updatePlaybackState(JSON.stringify(s));
+                return true;
+            } catch (e) {
+                console.warn(TAG, 'updateMetadata fallito', e);
+                return false;
+            }
+        }
+    };
+
+    // ------------------------------------------------------------
     // Lettura dello stato dal DOM / dagli elementi <audio>
     // ------------------------------------------------------------
     function textOf(selector) {
@@ -179,5 +210,6 @@
     setInterval(scanAudio, 3000);
     setInterval(function () { report(false); }, 5000); // heartbeat posizione
 
+    exposeCommandApi();
     console.log(TAG, 'bridge media installato');
 })();

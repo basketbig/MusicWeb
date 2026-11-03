@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -36,6 +37,19 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var mediaService: MediaPlaybackService? = null
     private var serviceBound = false
+
+    /** true solo se l'utente ha fermato la musica esplicitamente (notifica/indietro). */
+    @Volatile
+    private var userPausedPlayback = false
+
+    /** true se la WebView era in riproduzione quando siamo andati in background. */
+    private var wasPlayingBeforePause = false
+
+    /** Ultimo stato play/pausa riportato dal bridge JS (vedi AndroidMediaBridge). */
+    private var lastWebPlaying = false
+
+    @Volatile
+    private var webStateListener: ((Boolean) -> Unit)? = null
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -89,12 +103,25 @@ class MainActivity : AppCompatActivity() {
             displayZoomControls = false
         }
 
+        // Reattivita' al tocco: niente focus/ripple della WebView (intercettano
+        // i primi eventi touch e mostrano il highlight grigio sul desktop layout);
+        // il focus per la tastiera resta garantito da requestFocusNodeHref.
+        binding.webView.isFocusable = false
+        binding.webView.isFocusableInTouchMode = false
+        binding.webView.setBackgroundColor(Color.TRANSPARENT)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            binding.webView.overScrollMode = View.OVER_SCROLL_NEVER
+        }
+
         // Disabilita lo zoom da gestore touch a livello di WebView (pinch + double-tap).
-        binding.webView.setOnTouchListener { v, _ -> v.performClick(); false }
+        binding.webView.setOnTouchListener { v, event ->
+            if (event.action == android.view.MotionEvent.ACTION_DOWN) v.performClick()
+            false
+        }
 
         // Bridge JS -> notifica media nativa (window.AndroidMediaBridge)
         binding.webView.addJavascriptInterface(
-            AndroidMediaBridge(this),
+            AndroidMediaBridge(this, ::onWebPlaybackState),
             AndroidMediaBridge.INTERFACE_NAME
         )
 
@@ -159,6 +186,13 @@ class MainActivity : AppCompatActivity() {
     private fun handleExitBack() {
         val now = System.currentTimeMillis()
         if (now - lastBackExitTime < 2000L) {
+            // In background la WebView non viene sospesa (serve all'audio):
+            // se l'utente esce "davvero", fermiamo anche la riproduzione web.
+            if (lastWebPlaying) {
+                binding.webView.evaluateJavascript(
+                    "window.__spotifyWrapperCmd && window.__spotifyWrapperCmd('pause');", null
+                )
+            }
             finish()
         } else {
             lastBackExitTime = now
@@ -184,6 +218,28 @@ class MainActivity : AppCompatActivity() {
     private fun registerMediaDispatcher() {
         MediaPlaybackService.dispatchToWebView = { js ->
             runOnUiThread { binding.webView.evaluateJavascript(js, null) }
+        }
+        // Il servizio segnala al bridge quando la pausa e' stata richiesta
+        // dall'utente (non dal web): autorizza l'onPause() "selettivo".
+        MediaPlaybackService.onUserPaused = { userPausedPlayback = true }
+    }
+
+    /** Interroga lo stato reale del player web (callback sul main thread). */
+    private fun queryWebPlaying(callback: (Boolean) -> Unit) {
+        val script = "(function(){var a=document.querySelector('audio');" +
+            "return JSON.stringify(!!(a && !a.paused && !a.ended));})()"
+        binding.webView.evaluateJavascript(script) { result ->
+            // evaluateJavascript restituisce una stringa JSON gia' quotata: es. "true"
+            callback(result?.trim('"')?.toBoolean())
+        }
+    }
+
+    /** Ultimo stato play/pausa noto alla pagina (per l'onPause() selettivo). */
+    fun onWebPlaybackState(isPlaying: Boolean) {
+        runOnUiThread {
+            lastWebPlaying = isPlaying
+            // Se onPause attende ancora la risposta di queryWebPlaying, accontentalo.
+            webStateListener?.invoke(isPlaying)
         }
     }
 
@@ -271,17 +327,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        // NON chiamare mai webView.onPause() in modo incondizionato: congelerebbe
+        // timer/audio e la musica si fermerebbe in background. Lo sospendiamo
+        // solo se l'utente ha premuto Pausa (notifica o UI): in tal caso il
+        // webplayer e' gia' fermo, quindi congelare i timer fa risparmiare CPU.
+        if (!userPausedPlayback) return super.onPause()
+
+        val done = { playing: Boolean ->
+            wasPlayingBeforePause = playing
+            // Ricontrollo: nel frattempo l'activity potrebbe essere tornata avanti.
+            if (!playing && userPausedPlayback && !isFinishing) {
+                binding.webView.onPause()
+            }
+        }
+        webStateListener = done
+        queryWebPlaying(done)
         super.onPause()
-        binding.webView.onPause()
     }
 
     override fun onResume() {
         super.onResume()
         binding.webView.onResume()
+        webStateListener = null
+        // Se eravamo usciti per pausa utente, al rientro la WebView va riattivata;
+        // lo stato play/pause del web player resta quello scelto dall'utente.
+        userPausedPlayback = false
     }
 
     override fun onDestroy() {
         MediaPlaybackService.dispatchToWebView = null
+        MediaPlaybackService.onUserPaused = null
         unbindMediaService()
         AndroidMediaBridge.resetServiceFlag()
         binding.webView.destroy()
