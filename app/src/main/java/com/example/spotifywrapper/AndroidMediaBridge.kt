@@ -12,7 +12,11 @@ import org.json.JSONObject
  * notifica nativa; i pulsanti della notifica tornano alla pagina tramite
  * MediaPlaybackService.dispatchToWebView (vedi MainActivity).
  */
-class AndroidMediaBridge(private val context: Context) {
+class AndroidMediaBridge(
+    private val context: Context,
+    /** Callback opzionale verso l'activity per lo stato play/pausa corrente. */
+    private val onStateChanged: ((Boolean) -> Unit)? = null
+) {
 
     @JavascriptInterface
     fun updatePlaybackState(json: String?) {
@@ -28,6 +32,10 @@ class AndroidMediaBridge(private val context: Context) {
             val artworkUrl = obj.optString("artworkUrl", "")
 
             Log.d(TAG, "stato web: playing=$isPlaying \"$title\" - \"$artist\"")
+
+            // Lo stato play/pausa corrente serve alla MainActivity per decidere
+            // se sospendere la WebView in onPause() senza zittire l'audio.
+            onStateChanged?.invoke(isPlaying)
 
             // Avvia il servizio foreground solo quando c'e' riproduzione attiva:
             // su Android 12+ un FGS di tipo mediaPlayback non puo' partire

@@ -57,6 +57,11 @@ class MediaPlaybackService : Service() {
         @Volatile
         var dispatchToWebView: ((js: String) -> Unit)? = null
 
+        /** Segnala alla MainActivity che la pausa e' stata chiesta dall'utente
+         *  (pulsante notifica/media key), non dal web player. */
+        @Volatile
+        var onUserPaused: (() -> Unit)? = null
+
         fun start(context: Context) {
             val intent = Intent(context, MediaPlaybackService::class.java)
             try {
@@ -138,12 +143,15 @@ class MediaPlaybackService : Service() {
 
         mediaSession = MediaSessionCompat(this, "SpotifyWrapperSession").apply {
             setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() = sendCommand("play")
-                override fun onPause() = sendCommand("pause")
-                override fun onSkipToNext() = sendCommand("next")
-                override fun onSkipToPrevious() = sendCommand("prev")
+                override fun onPlay() = sendCommandWithFallback("play")
+                override fun onPause() {
+                    onUserPaused?.invoke()
+                    sendCommandWithFallback("pause")
+                }
+                override fun onSkipToNext() = sendCommandWithFallback("next")
+                override fun onSkipToPrevious() = sendCommandWithFallback("prev")
                 override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
-                    if (action != null) sendCommand(action)
+                    if (action != null) sendCommandWithFallback(action)
                 }
                 override fun onStop() {
                     stopSelf()
@@ -241,6 +249,7 @@ class MediaPlaybackService : Service() {
         instance = null
         NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID)
         dispatchToWebView = null
+        onUserPaused = null
         artworkLoader?.shutdown()
         mediaSession.release()
         super.onDestroy()
@@ -351,8 +360,24 @@ class MediaPlaybackService : Service() {
         dispatchToWebView?.invoke(js)
     }
 
+    /**
+     * Il comando non arriva alla WebView quando l'activity e' distrutta o il
+     * dispatcher non e' registrato (es. task chiuso, activity ricreata): niente
+     * fallback possibile per una sessione basata su WebView, ma loggare aiuta
+     * a diagnosticare i pulsanti "muti".
+     */
+    private fun sendCommandWithFallback(command: String) {
+        if (dispatchToWebView == null) {
+            Log.w("MediaPlaybackService", "dispatcher assente: comando '$command' perso")
+            return
+        }
+        sendCommand(command)
+    }
+
     private fun togglePlayPause() {
-        sendCommand(if (currentlyPlaying) "pause" else "play")
+        val cmd = if (currentlyPlaying) "pause" else "play"
+        if (cmd == "pause") onUserPaused?.invoke()
+        sendCommandWithFallback(cmd)
     }
 
     // ------------------------------------------------------------------
