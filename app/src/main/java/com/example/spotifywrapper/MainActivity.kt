@@ -229,8 +229,11 @@ class MainActivity : AppCompatActivity() {
         val script = "(function(){var a=document.querySelector('audio');" +
             "return JSON.stringify(!!(a && !a.paused && !a.ended));})()"
         binding.webView.evaluateJavascript(script) { result ->
-            // evaluateJavascript restituisce una stringa JSON gia' quotata: es. "true"
-            callback(result?.trim('"')?.toBoolean())
+            // evaluateJavascript restituisce una stringa JSON gia' quotata: es. "true".
+            // toBoolean() e' primitivo Boolean, ma su un receiver nullable (result
+            // e' String?) il risultato e' Boolean?: costringiamo il tipo a Boolean.
+            val playing: Boolean = result?.trim('"', ' ')?.toBoolean() ?: false
+            callback(playing)
         }
     }
 
