@@ -113,11 +113,11 @@ class MainActivity : AppCompatActivity() {
             binding.webView.overScrollMode = View.OVER_SCROLL_NEVER
         }
 
-        // Disabilita lo zoom da gestore touch a livello di WebView (pinch + double-tap).
-        binding.webView.setOnTouchListener { v, event ->
-            if (event.action == android.view.MotionEvent.ACTION_DOWN) v.performClick()
-            false
-        }
+        // NIENTE setOnTouchListener qui: in Android 10+ il listener si
+        // sovrappone alla catena di dispatch della WebView e causa tap
+        // "persi" o con doppio tocco. Lo zoom e' gia' impedito da
+        // setSupportZoom(false) + touch-action:manipulation + maximum-scale=1
+        // (viewport iniettato), che eliminano anche il ritardo dei 300ms.
 
         // Bridge JS -> notifica media nativa (window.AndroidMediaBridge)
         binding.webView.addJavascriptInterface(
@@ -300,6 +300,11 @@ class MainActivity : AppCompatActivity() {
         MediaPlaybackService.mainActivityAlive = true
         askNotificationPermissionIfNeeded()
         bindMediaService()
+        // Se la pagina e' stata caricata mentre l'app era in background, il
+        // bridge JS ha bisogno del flag di visibilita' aggiornato (vedi spoof).
+        binding.webView.evaluateJavascript(
+            "window.__spotifyWrapperVisibility && window.__spotifyWrapperVisibility(true);", null
+        )
     }
 
     /** POST_NOTIFICATIONS e' runtime su Android 13+: senza, niente notifica media. */
@@ -335,6 +340,12 @@ class MainActivity : AppCompatActivity() {
         if (userPausedPlayback && lastWebPlaying) {
             MediaPlaybackService.pauseWebPlayback(binding.webView)
         }
+        // La WebView passa a "window nascosta": la pagina lo percepisce e
+        // Spotify mette in pausa + risulterebbe offline dal PC. Il bridge JS
+        // fa credere alla pagina di essere sempre in primo piano (vedi inject.js).
+        binding.webView.evaluateJavascript(
+            "window.__spotifyWrapperVisibility && window.__spotifyWrapperVisibility(false);", null
+        )
         unbindMediaService()
         super.onStop()
     }
@@ -380,6 +391,10 @@ class MainActivity : AppCompatActivity() {
         MediaPlaybackService.onUserPaused = null
         unbindMediaService()
         AndroidMediaBridge.resetServiceFlag()
+        // Stacco la WebView dal view tree PRIMA di destroy(): evita il leak
+        // del renderer Chromium (mantiene vivo il processore audio anche
+        // dopo la distruzione dell'activity, con effetti su sessione/PC).
+        (binding.webView.parent as? android.view.ViewGroup)?.removeView(binding.webView)
         binding.webView.destroy()
         super.onDestroy()
     }

@@ -17,6 +17,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Necessario per mostrare la notifica su Android 13+ (runtime permission) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Il renderer audio della WebView ha bisogno della CPU sveglia durante il
+         playback a schermo spento: senza, Doze sospende i timer JS e la pagina
+         perde il keep-alive della sessione (risulta offline dal PC). -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:allowBackup="true"

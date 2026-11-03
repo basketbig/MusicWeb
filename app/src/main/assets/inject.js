@@ -230,6 +230,10 @@
             clientX: x, clientY: y, screenX: touch.screenX, screenY: touch.screenY,
             button: 0, buttons: 1
         };
+        // Marca l'evento come generato dal wrapper: la finestra WebView non puo'
+        // impostare isTrusted, quindi il guard anti-doppio-click sotto filtra
+        // solo i click NATIVI e lascia passare questi.
+        Object.defineProperty(opts, 'isTrustedWrapper', { value: true });
         try {
             el.dispatchEvent(new MouseEvent('mousedown', opts));
             el.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, opts, { buttons: 0 })));
@@ -242,19 +246,37 @@
     function installTouchBridge() {
         if (window.__spotifyWrapperTouchBridge) return;
         window.__spotifyWrapperTouchBridge = true;
-        document.addEventListener('touchend', function (ev) {
-            var t = ev.changedTouches && ev.changedTouches[0];
+        // Strategia "first-touch": il click sintetizzato parte su touchstart,
+        // quindi l'azione e' immediata. Il click NATIVO che Chromium genera
+        // dopo ~300ms viene neutralizzato dal guard in capture-phase sotto:
+        // niente doppio toggle (era questo a dare l'impressione del "due tap").
+        var lastSynthAt = 0;
+
+        document.addEventListener('touchstart', function (ev) {
+            var t = ev.touches && ev.touches[0];
             if (!t) return;
             var el = document.elementFromPoint(t.clientX, t.clientY);
-            // Solo elementi "non nativi clickable": se ha gia\' handler touch/pointer
-            // propri (es. slider del player) non interferiamo.
-            if (!el) return;
+            if (!el || el === document.body) return;
+            // Slider del player: hanno handler pointer propri, non toccarli.
             if (el.closest('input[type="range"], .progress-bar, [role="slider"]')) return;
-            // Se il browser ha gia\' generato un click reale, non duplicarlo.
-            if (ev.defaultPrevented) return;
+            // Solo elementi interattivi: niente sintesi su testo/card passive.
+            var target = el.closest('button, a, [role="button"], [data-testid]');
+            if (!target || target === document.body) return;
+            lastSynthAt = Date.now();
             synthesizeClickFromTouch(t);
         }, { passive: true });
-        console.log(UI_TAG, 'bridge touch->click attivo');
+
+        document.addEventListener('click', function (ev) {
+            // Evita SOLO il click nativo ritardato di Chromium: i nostri eventi
+            // sintetici portano il marker e devono propagarsi.
+            if (ev.isTrustedWrapper || !ev.isTrusted) return;
+            if (Date.now() - lastSynthAt < 700) {
+                ev.stopPropagation();
+                ev.preventDefault();
+            }
+        }, true);
+
+        console.log(UI_TAG, 'bridge touch->click attivo (first-touch)');
     }
 
     /* ----------------------------------------------------------
@@ -287,9 +309,52 @@
     }
 
     /* ----------------------------------------------------------
+     * PAGE VISIBILITY SPOOF
+     * Quando la WebView va in background o lo schermo si spegne,
+     * Chromium riporta document.hidden=true / visibilityState='hidden':
+     * Spotify mette in pausa l'audio e la sessione risulta offline dal PC.
+     * Fingiamo una finestra SEMPRE visibile; l'app nativa notifica il
+     * cambio reale via __spotifyWrapperVisibility(bool) (MainActivity).
+     * ---------------------------------------------------------- */
+    var appVisible = true;
+
+    function installVisibilitySpoof() {
+        if (window.__spotifyWrapperVisSpoof) return;
+        window.__spotifyWrapperVisSpoof = true;
+
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            get: function () { return false; }
+        });
+        Object.defineProperty(document, 'visibilityState', {
+            configurable: true,
+            get: function () { return 'visible'; }
+        });
+
+        // Blocca i listener di visibilitychange/pagehide della pagina:
+        // cosi' non possono reagire all'oscuramento reale della WebView.
+        var origAdd = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function (type, listener, options) {
+            if ((type === 'visibilitychange' || type === 'pagehide') &&
+                (this === document || this === window)) {
+                return; // ignorato
+            }
+            return origAdd.call(this, type, listener, options);
+        };
+
+        // API interna: MainActivity la chiama quando l'app cambia visibilita'.
+        window.__spotifyWrapperVisibility = function (visible) {
+            appVisible = !!visible;
+            console.log(UI_TAG, 'visibilita' + String.fromCharCode(39) + ' segnalata:', appVisible);
+        };
+        console.log(UI_TAG, 'visibility spoof attivo');
+    }
+
+    /* ----------------------------------------------------------
      * BOOTSTRAP
      * ---------------------------------------------------------- */
     function bootstrap() {
+        installVisibilitySpoof();
         applyStyles();
         forceViewport();
         installTouchBridge();

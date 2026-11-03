@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.os.Binder
+import android.os.PowerManager
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
@@ -52,6 +53,10 @@ class MediaPlaybackService : Service() {
         private const val EXTRA_TITLE = "extra_title"
         private const val EXTRA_ARTIST = "extra_artist"
         private const val EXTRA_IS_PLAYING = "extra_is_playing"
+        private const val EXTRA_ALBUM = "extra_album"
+        private const val EXTRA_POSITION = "extra_position"
+        private const val EXTRA_DURATION = "extra_duration"
+        private const val EXTRA_HAS_ARTWORK = "extra_has_artwork"
 
         /** Callback verso la WebView, registrato da MainActivity. */
         @Volatile
@@ -119,11 +124,17 @@ class MediaPlaybackService : Service() {
                 svc.handleUpdate(title, artist, album, artwork, isPlaying, positionMs, durationMs)
                 return
             }
-            // Il servizio non è ancora attivo: lo avviamo e passiamo i dati via Intent
+            // Il servizio non è ancora attivo: lo avviamo e passiamo i dati via Intent.
+            // NOTA: gli EXTRA vengono letti in onStartCommand; se il bridge ne ha
+            // gia' inviati altri (coda), li uniamo qui per non perdere nulla.
             val intent = Intent(context, MediaPlaybackService::class.java).apply {
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_ARTIST, artist)
                 putExtra(EXTRA_IS_PLAYING, isPlaying)
+                putExtra(EXTRA_ALBUM, album)
+                putExtra(EXTRA_POSITION, positionMs)
+                putExtra(EXTRA_DURATION, durationMs)
+                if (artwork != null) putExtra(EXTRA_HAS_ARTWORK, true)
             }
             try {
                 ContextCompat.startForegroundService(context, intent)
@@ -148,6 +159,11 @@ class MediaPlaybackService : Service() {
     private lateinit var mediaSession: MediaSessionCompat
     private var artworkLoader: ArtworkLoader? = null
     private var binder: LocalBinder? = null
+
+    /** Wakelock CPU partial: tiene viva la CPU a schermo spento cosi' il
+     *  renderer audio della WebView e i timer JS della pagina (keep-alive
+     *  della sessione Spotify) non vengono congelati da Doze. */
+    private var wakeLock: PowerManager.WakeLock? = null
 
     private var currentTitle = ""
     private var currentArtist = ""
@@ -226,23 +242,29 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Se qualcuno ci ha ri-avviati con startForegroundService (es. bridge JS),
-        // il sistema pretende una chiamata a startForeground() ENTRO 5 secondi,
-        // anche se il servizio era gia' in foreground: la ripetiamo (idempotente).
-        if (intent != null && intent.action == null) {
-            startForegroundCompat()
-        }
+        // Ogni avvio via startForegroundService (bridge JS incluso) pretende
+        // startForeground() ENTRO 5 secondi: richiamarla SEMPRE, idempotente.
+        // Prima si faceva solo per intent senza action: con un Intent che porta
+        // metadati (il caso normale del bridge) il flag veniva saltato =>
+        // su Android 8+ IllegalStateException/ANR = notifica mai mostrata.
+        startForegroundCompat()
+
         when (intent?.action) {
             ACTION_PLAY_PAUSE -> togglePlayPause()
             ACTION_PREV -> sendCommand("prev")
             ACTION_NEXT -> sendCommand("next")
             else -> {
-                // Avvio "pulito" o con dati iniziali dall'Intent (servizio non attivo)
                 val title = intent?.getStringExtra(EXTRA_TITLE)
                 val artist = intent?.getStringExtra(EXTRA_ARTIST)
                 val playing = intent?.getBooleanExtra(EXTRA_IS_PLAYING, false) ?: false
+                val album = intent?.getStringExtra(EXTRA_ALBUM) ?: ""
+                val pos = intent?.getLongExtra(EXTRA_POSITION, 0L) ?: 0L
+                val dur = intent?.getLongExtra(EXTRA_DURATION, 0L) ?: 0L
                 if (title != null || artist != null) {
-                    handleUpdate(title ?: "", artist ?: "", "", null, playing, 0L, 0L)
+                    // Copertina: il bitmap non puo' viaggiare nell'Intent oltre
+                    // il binder del start; la ricarichiamo dal bridge al primo
+                    // heartbeat successivo (peekInstance() ora e' vivo).
+                    handleUpdate(title ?: currentTitle, artist ?: currentArtist, album, null, playing, pos, dur)
                 }
             }
         }
@@ -264,7 +286,30 @@ class MediaPlaybackService : Service() {
         super.onTaskRemoved(rootIntent)
     }
 
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "spotifywrapper:playback").apply {
+                setReferenceCounted(false)
+                // Timeout di sicurezza: mai tenere la CPU sveglia per sempre.
+                acquire(10L * 60L * 60L * 1000L) // 10 ore
+            }
+        } catch (e: Exception) {
+            Log.w("MediaPlaybackService", "wakelock negato", e)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) wakeLock?.release()
+        } catch (_: Exception) {
+        }
+        wakeLock = null
+    }
+
     override fun onDestroy() {
+        releaseWakeLock()
         instance = null
         handler.removeCallbacksAndMessages(null)
         NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID)
@@ -320,8 +365,10 @@ class MediaPlaybackService : Service() {
         mediaSession.setMetadata(mdBuilder.build())
 
         val state = if (isPlaying) {
+            acquireWakeLock()
             PlaybackStateCompat.STATE_PLAYING
         } else {
+            releaseWakeLock()
             PlaybackStateCompat.STATE_PAUSED
         }
         mediaSession.setPlaybackState(

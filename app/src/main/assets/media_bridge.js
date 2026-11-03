@@ -15,8 +15,12 @@
     var TAG = '[MediaBridge]';
 
     if (window.__spotifyWrapperMediaBridge) {
-        console.log(TAG, 'gia\' attivo, ri-sincronizzo lo stato');
-        window.__spotifyWrapperReport();
+        // Seconda iniezione (navigazione SPA): niente doppio observer, MA va
+        // re-associato il listener play/pause sugli <audio>: il bridge nativo
+        // AndroidMediaBridge e' stato ricreato con un nuovo oggetto Java e i
+        // vecchi closure chiamerebbero un reference stale.
+        rescanAudio(true);
+        report(true);
         return;
     }
     window.__spotifyWrapperMediaBridge = true;
@@ -153,7 +157,12 @@
         var audio = firstAudio();
         if (audio) {
             if (wantPlaying && audio.paused) {
-                audio.play().catch(function () { pressButton('control-button-play'); });
+                audio.play().catch(function () {
+                    // Fallback 1: bottone play dedicato, Fallback 2: toggle.
+                    if (!pressButton('control-button-play')) {
+                        pressButton('control-button-playpause');
+                    }
+                });
             } else if (!wantPlaying && !audio.paused) {
                 audio.pause();
             }
@@ -194,8 +203,8 @@
         requestAnimationFrame(function () { scheduled = false; report(false); });
     }).observe(document.documentElement, { childList: true, subtree: true, attributes: true });
 
-    function bindAudio(el) {
-        if (el.__wrapperBound) return;
+    function bindAudio(el, force) {
+        if (el.__wrapperBound && !force) return;
         el.__wrapperBound = true;
         ['play', 'pause', 'ended'].forEach(function (ev) {
             el.addEventListener(ev, function () { report(true); });
@@ -203,9 +212,11 @@
         console.log(TAG, 'eventi audio collegati');
     }
 
-    function scanAudio() {
-        document.querySelectorAll('audio').forEach(bindAudio);
+    function rescanAudio(force) {
+        document.querySelectorAll('audio').forEach(function (a) { bindAudio(a, force); });
     }
+
+    function scanAudio() { rescanAudio(false); }
     scanAudio();
     setInterval(scanAudio, 3000);
     setInterval(function () { report(false); }, 5000); // heartbeat posizione
