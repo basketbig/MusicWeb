@@ -45,4 +45,6 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.media:media:1.7.0")
+    // WebView ext: Client Hints (User-Agent metadata) per fingerprint desktop completa
+    implementation("androidx.webkit:webkit:1.10.0")
 }

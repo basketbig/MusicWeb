@@ -18,6 +18,9 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.webkit.UserAgentMetadataCompat
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import com.example.spotifywrapper.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
@@ -101,6 +104,38 @@ class MainActivity : AppCompatActivity() {
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false
+
+            // CLIENT HINTS: il solo User-Agent non basta. navigator.userAgentData
+            // (Chrome 90+) riporta brand/piattaforma REALI (Android/mobile) e
+            // Spotify usa quell'oggetto per decidere layout e compatibilita'.
+            // WebSettingsCompat riscrive i Client Hints lato Chromium cosi' la
+            // fingerprint coincide con Chrome desktop (mobile=false, Windows).
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_CLIENT_HINTS)) {
+                WebSettingsCompat.setUserAgentClientHints(
+                    this,
+                    UserAgentMetadataCompat.Builder()
+                        .setMobile(false)          // IMPORTANTISSIMO: NON mobile
+                        .setBrandListVersion(
+                            listOf(
+                                Pair("Chromium", "120"),
+                                Pair("Google Chrome", "120"),
+                                Pair("Not?A_Brand", "24")
+                            )
+                        )
+                        .setFullVersionListVersion(
+                            listOf(
+                                Pair("Chromium", "120.0.6099.230"),
+                                Pair("Google Chrome", "120.0.6099.230"),
+                                Pair("Not?A_Brand", "24.0.0.0")
+                            )
+                        )
+                        .setPlatform("Windows")
+                        .setPlatformVersion("15.0.0")
+                        .setArchitecture("x86")
+                        .setModel("")
+                        .build()
+                )
+            }
         }
 
         // FIX TASTIERA: NON disabilitare mai isFocusable/isFocusableInTouchMode.
@@ -122,6 +157,15 @@ class MainActivity : AppCompatActivity() {
         // "persi" o con doppio tocco. Lo zoom e' gia' impedito da
         // setSupportZoom(false) + touch-action:manipulation + maximum-scale=1
         // (viewport iniettato), che eliminano anche il ritardo dei 300ms.
+
+        // FIX TASTIERA: la WebView deve essere il root focus della finestra,
+        // altrimenti il focus del DOM non "propaga" alla IMM e la tastiera
+        // non appare al primo tap. requestFocusFromTouch() marca la richiesta
+        // come originata dal tocco (comportamento identico a Chrome).
+        binding.webView.requestFocus()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            binding.webView.defaultFocusHighlightEnabled = false
+        }
 
         // Bridge JS -> notifica media nativa (window.AndroidMediaBridge)
         binding.webView.addJavascriptInterface(
