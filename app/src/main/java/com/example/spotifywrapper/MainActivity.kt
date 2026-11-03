@@ -18,7 +18,7 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.webkit.UserAgentMetadataCompat
+import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import com.example.spotifywrapper.databinding.ActivityMainBinding
@@ -110,31 +110,18 @@ class MainActivity : AppCompatActivity() {
             // Spotify usa quell'oggetto per decidere layout e compatibilita'.
             // WebSettingsCompat riscrive i Client Hints lato Chromium cosi' la
             // fingerprint coincide con Chrome desktop (mobile=false, Windows).
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_CLIENT_HINTS)) {
-                WebSettingsCompat.setUserAgentClientHints(
-                    this,
-                    UserAgentMetadataCompat.Builder()
-                        .setMobile(false)          // IMPORTANTISSIMO: NON mobile
-                        .setBrandListVersion(
-                            listOf(
-                                Pair("Chromium", "120"),
-                                Pair("Google Chrome", "120"),
-                                Pair("Not?A_Brand", "24")
-                            )
-                        )
-                        .setFullVersionListVersion(
-                            listOf(
-                                Pair("Chromium", "120.0.6099.230"),
-                                Pair("Google Chrome", "120.0.6099.230"),
-                                Pair("Not?A_Brand", "24.0.0.0")
-                            )
-                        )
-                        .setPlatform("Windows")
-                        .setPlatformVersion("15.0.0")
-                        .setArchitecture("x86")
-                        .setModel("")
-                        .build()
-                )
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+                val metadata = UserAgentMetadata.Builder()
+                    .setBrand("\"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\", \"Not?A_Brand\";v=\"24\"")
+                    .setFullVersion("120.0.6099.230")
+                    .setMajorVersion("120")
+                    .setMobile(false)              // IMPORTANTISSIMO: NON mobile
+                    .setPlatform("Windows")
+                    .setPlatformVersion("15.0.0")
+                    .setArchitecture("x86")
+                    .setModel("")
+                    .build()
+                WebSettingsCompat.setUserAgentMetadata(this, metadata)
             }
         }
 
