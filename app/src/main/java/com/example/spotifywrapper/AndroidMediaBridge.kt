@@ -1,11 +1,9 @@
 package com.example.spotifywrapper
 
-import android.app.Activity
 import android.content.Context
 import android.os.Build
 import android.util.Log
 import android.webkit.JavascriptInterface
-import androidx.core.app.ActivityCompat
 import org.json.JSONObject
 
 /**
@@ -41,6 +39,10 @@ class AndroidMediaBridge(private val context: Context) {
             if (!serviceStarted) return // niente sessione attiva: non creare notifiche a vuoto
             requestNotificationPermissionIfNeeded()
 
+            // Se il servizio non e' ancora nato (startForegroundService e' asincrona),
+            // salta questo battito: il prossimo heartbeat lo intercettera' vivo.
+            if (isPlaying && MediaPlaybackService.peekInstance() == null) return
+
             MediaPlaybackService.update(
                 context = context,
                 title = title,
@@ -61,24 +63,20 @@ class AndroidMediaBridge(private val context: Context) {
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (notificationPermissionRequested) return
-        notificationPermissionRequested = true
-        val activity = context as? Activity ?: return
-        ActivityCompat.requestPermissions(
-            activity,
-            arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
-            REQ_NOTIF_PERMISSION
-        )
+        // POST_NOTIFICATIONS viene chiesto in MainActivity.onStart(): qui ci
+        // limitiamo a verificare (registerForActivityResult non e' invocabile
+        // fuori dal ciclo di creazione dell'activity).
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.POST_NOTIFICATIONS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) Log.w(TAG, "notifiche negate: la sessione media restera' senza notifica")
     }
 
     companion object {
         private const val TAG = "AndroidMediaBridge"
         const val INTERFACE_NAME = "AndroidMediaBridge"
-        const val REQ_NOTIF_PERMISSION = 42
-
         @Volatile
         private var serviceStarted = false
-        private var notificationPermissionRequested = false
 
         /** Reset del flag: chiamato da MainActivity in onDestroy. */
         fun resetServiceFlag() {

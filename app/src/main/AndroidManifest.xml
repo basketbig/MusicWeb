@@ -5,15 +5,16 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
-        FOREGROUND_SERVICE: richiesto da ogni startForeground() su API 28+.
-        NON deve avere maxSdkVersion: senza questo permesso il sistema
-        uccide il servizio con SecurityException all'avvio (Android 14 incluso).
+        FOREGROUND_SERVICE: richiesto da ogni startForeground() su API 28+ (P).
+        Il permesso viene concesso automaticamente all'installazione (normal
+        permission), ma DEVE essere dichiarato o il sistema lancia
+        SecurityException: "startForeground ... requires
+        android.permission.FOREGROUND_SERVICE" (il crash visto su Android 14).
+        Attenzione: qui maxSdkVersion/minSdkVersion NON vanno mai messi.
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Tipo FGS obbligatorio da Android 14 (API 34): serve SOLO dalla API 29 in su -->
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
-        android:minSdkVersion="29" />
+    <!-- Tipo FGS mediaPlayback: obbligatorio da Android 14 (API 34), introdotto API 29 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Necessario per mostrare la notifica su Android 13+ (runtime permission) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 

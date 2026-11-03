@@ -1,5 +1,6 @@
 package com.example.spotifywrapper
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
@@ -12,8 +13,9 @@ import android.view.View
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
-import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.example.spotifywrapper.databinding.ActivityMainBinding
 
 class MainActivity : AppCompatActivity() {
@@ -21,6 +23,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val SPOTIFY_URL = "https://open.spotify.com"
         private const val STATE_WEBVIEW = "webview_state"
+        private const val TAG = "MainActivity"
 
         // Desktop UA: Spotify Web Player rifiuta/funziona male con UA mobili.
         // (Il formato Chrome desktop è richiesto da "browser non supportato".)
@@ -32,6 +35,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var mediaService: MediaPlaybackService? = null
     private var serviceBound = false
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            // Su Android 14 un FGS mediaPlayback SENZA notifica visibile puo'
+            // essere bloccato dal sistema: niente sessione media se negato.
+            android.util.Log.w(TAG, "POST_NOTIFICATIONS negato: controls non disponibili")
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -130,6 +143,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @Suppress("DEPRECATION") // firma nullable: non-nullable solo da appcompat 1.7 (compileSdk 35)
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        // Il pulsante "Stop" della notifica punta a questa activity perche' il
+        // servizio e' exported=false e non puo' ricevere PendingIntent getService.
+        if (intent.action == MediaPlaybackService.ACTION_STOP) {
+            AndroidMediaBridge.resetServiceFlag()
+            MediaPlaybackService.stop(this)
+            intent.action = null
+        }
+    }
+
     /** I pulsanti della notifica finiscono qui: esegue il JS nella WebView. */
     private fun registerMediaDispatcher() {
         MediaPlaybackService.dispatchToWebView = { js ->
@@ -178,20 +203,34 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        askNotificationPermissionIfNeeded()
         bindMediaService()
-        // Chiedi il permesso notifiche su Android 13+ al primo avvio
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            androidx.core.content.ContextCompat.checkSelfPermission(
-                this, android.Manifest.permission.POST_NOTIFICATIONS
-            ).let { granted ->
-                if (granted != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(
-                        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
-                        AndroidMediaBridge.REQ_NOTIF_PERMISSION
-                    )
-                }
-            }
+    }
+
+    /** POST_NOTIFICATIONS e' runtime su Android 13+: senza, niente notifica media. */
+    private fun askNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.POST_NOTIFICATIONS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    /** Start/stop espliciti del foreground service (uso manuale/debug). */
+    @Suppress("unused")
+    private fun startMediaService() {
+        createChannel()
+        ContextCompat.startForegroundService(
+            this, Intent(this, MediaPlaybackService::class.java)
+        )
+    }
+
+    @Suppress("unused")
+    private fun stopMediaService() {
+        AndroidMediaBridge.resetServiceFlag()
+        MediaPlaybackService.stop(this)
     }
 
     override fun onStop() {
