@@ -1,22 +1,26 @@
 /* ============================================================
- * inject.js - Anti-ads per Spotify Web Player (open.spotify.com)
- * Iniettato dalla WebView via evaluateJavascript ad ogni pagina.
- * Apri chrome://inspect -> Console per vedere i log [AdBlocker].
+ * inject.js - UserScript + UserStyle per Spotify Web Player
+ * (open.spotify.com) nella WebView dell'app wrapper.
+ *
+ * Contiene:
+ *   1) Anti-ads (CSS statico + pulizia runtime + MutationObserver)
+ *   2) UserStyle "app-like": ottimizza la UI desktop per il tocco mobile
+ *   3) Utility JS: viewport forzato, touch->click, re-iniezione su SPA
+ *
+ * Debug: chrome://inspect -> Console (log con prefisso [Wrapper]/[AdBlocker]).
  * ============================================================ */
 (function () {
     'use strict';
 
-    if (window.__spotifyWrapperInjected) {
-        // Gia' iniettato: ri-esegui solo la pulizia, niente secondo observer
-        window.__spotifyWrapperCleanAds();
-        return;
-    }
-    window.__spotifyWrapperInjected = true;
+    var AD_TAG = '[AdBlocker]';
+    var UI_TAG = '[Wrapper/UI]';
 
-    var TAG = '[AdBlocker]';
+    /* ----------------------------------------------------------
+     * SEZIONE CSS (UserStyle)
+     * ---------------------------------------------------------- */
 
-    // --- 1) CSS statico per nascondere i banner noti ---
-    var css = [
+    // --- 1) CSS anti-ads (gia' presente, invariato) ---
+    var adCss = [
         '[data-testid="ad-banner"]',
         '[data-testid^="leaderboard-leaderboard"]',
         '.ad-container',
@@ -28,13 +32,142 @@
         'div[aria-label*="Sponsorizzato" i]'
     ].join(',\n') + ' { display: none !important; visibility: hidden !important; height: 0 !important; max-height: 0 !important; overflow: hidden !important; }';
 
-    var styleEl = document.createElement('style');
-    styleEl.id = 'spotify-wrapper-adblock-css';
-    styleEl.appendChild(document.createTextNode(css));
-    (document.head || document.documentElement).appendChild(styleEl);
+    // --- 2) CSS "app-like" per il tocco su mobile ---
+    var uiCss = [
+        /* Reattivita': niente ritardo 300ms sui tap */
+        '*, *::before, *::after { touch-action: manipulation; }',
 
-    // --- 2) Pulizia runtime: cerca elementi ads "per contenuto" ---
-    // Selettori generici: funzionano anche se Spotify cambia le classi.
+        /* Niente selezione accidentale del testo (input esclusi) */
+        '*, *::before, *::after {',
+        '  -webkit-user-select: none;',
+        '  user-select: none;',
+        '  -webkit-touch-callout: none;',
+        '}',
+        'input, textarea, [contenteditable="true"], [role="textbox"] {',
+        '  -webkit-user-select: text;',
+        '  user-select: text;',
+        '}',
+
+        /* Scrollbar invisibili ma scroll funzionante */
+        '::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }',
+        '* { scrollbar-width: none !important; }',
+
+        /* Nascondi elementi desktop invasivi: banner "get the app", upsell Premium,
+           sidebar secondari/ridondanti. Selettori generici: se Spotify cambia
+           struttura, qui al massimo resta visibile l'elemento (nessun danno). */
+        '[data-testid="upgrade-button"],',                            /* CTA "Upgrade to Premium" header */
+        'header [data-testid="cta-button"],',
+        'a[data-testid="download-app-button"],',
+        '[data-testid="download-link"],',
+        '[id*="banner-wrapper" i],',                                  /* topbars promo */
+        '[data-component-type="standalone-hero-banner"],',
+        '[data-component-type="notification-banner"],',
+        'section[aria-label*="Get Spotify" i],',
+        'aside[aria-label*="Get on your phone" i],',
+        'div[class*="premium-upsell" i],',
+        'div[class*="PremiumUpsell" i]',
+        '{ display: none !important; }',
+
+        /* Sidebar "Now playing" espandibile: su mobile occupa mezzo schermo */
+        'aside[data-testid="now-playing-widget"] { display: none !important; }',
+
+        /* Colonne ridondanti nelle tabelle tracce (album / aggiungi ai preferiti) */
+        '[data-testid="collection-row-separator"],',
+        'td[data-testid="column-content-add"],',
+        'span[data-testid="add-to-playlist-button"],',
+        'button[data-testid="add-to-playlist-button"]',
+        '{ display: none !important; }',
+
+        /* Layout a piena larghezza: contenitori e griglie desktop */
+        '.main-view-grid__main,',
+        '[data-testid="view"],',
+        'main',
+        '{ min-width: 0 !important; width: 100% !important; padding-left: 8px !important; padding-right: 8px !important; }',
+
+        /* Playlist/album: una sola colonna di card larga, niente colonne extra */
+        '[data-testid="main-content"] .container-suggest-cards-list,',
+        '[data-testid="main-content"] .glue-page-wrapper__content,',
+        '[data-testid="main-content"] section > div[class*="main-grid"]',
+        '{ grid-template-columns: 1fr 1fr !important; gap: 8px !important; }',
+
+        /* Riga traccia: nascondi la copertina duplicata quando gia\' mostrata */
+        '[data-testid="tracklist-row"] [data-testid="image"] img { border-radius: 4px; }',
+
+        /* Player inferiore: barra fissa pulita e alta abbastanza per il tocco */
+        'footer[data-testid="player"],',
+        '#nowplaying-bar,',
+        '[data-testid="now-playing-bar"]',
+        '{',
+        '  position: fixed !important;',
+        '  bottom: 0 !important;',
+        '  left: 0 !important;',
+        '  right: 0 !important;',
+        '  min-height: 70px !important;',
+        '  z-index: 9999 !important;',
+        '  padding-bottom: env(safe-area-inset-bottom, 0px) !important;',
+        '}',
+        /* Lascia spazio sotto i contenuti cosi\' l\'ultima riga non e\' coperta dal player */
+        'body { padding-bottom: 96px !important; }',
+
+        /* Pulsanti principali del player: area tocco >= 48px */
+        'footer button[data-testid="play-pause"],',
+        'footer button[data-testid="previous"],',
+        'footer button[data-testid="next"],',
+        'footer button[data-testid="shuffle"],',
+        'footer button[data-testid="repeat"]',
+        '{',
+        '  min-width: 48px !important;',
+        '  min-height: 48px !important;',
+        '}',
+        'footer button[data-testid="play-pause"] {',
+        '  min-width: 56px !important;',
+        '  min-height: 56px !important;',
+        '}',
+
+        /* Font piu\' grandi per titoli brano/artista e pulsanti principali */
+        '[data-testid="now-playing-widget"] [data-testid="media-player-info"] .encore-informative-text,',
+        '.marquee-inner span.encore-informative-text',
+        '{ font-size: 16px !important; line-height: 1.3 !important; }',
+        '[data-testid="media-player-info"] .encore-bold-text-element { font-size: 15px !important; }',
+        'h1.encore-bold-title-medium, h1.encore-bold-title-large { font-size: 24px !important; }',
+        'button[data-testid="play-button"] { min-height: 48px !important; min-width: 48px !important; }'
+    ].join('\n');
+
+    function injectStyle(id, cssText) {
+        if (!document.getElementById(id)) {
+            var el = document.createElement('style');
+            el.id = id;
+            el.appendChild(document.createTextNode(cssText));
+            (document.head || document.documentElement).appendChild(el);
+        }
+    }
+
+    function applyStyles() {
+        injectStyle('spotify-wrapper-adblock-css', adCss);
+        injectStyle('spotify-wrapper-ui-css', uiCss);
+    }
+
+    /* ----------------------------------------------------------
+     * VIEWPORT FORZATO
+     * Impedisce lo zoom-out fastidioso della pagina desktop.
+     * ---------------------------------------------------------- */
+    function forceViewport() {
+        var content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+        var meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) {
+            meta = document.createElement('meta');
+            meta.name = 'viewport';
+            (document.head || document.documentElement).appendChild(meta);
+        }
+        if (meta.getAttribute('content') !== content) {
+            meta.setAttribute('content', content);
+            console.log(UI_TAG, 'viewport forzato:', content);
+        }
+    }
+
+    /* ----------------------------------------------------------
+     * ANTI-ADS RUNTIME (logica preesistente, invariata)
+     * ---------------------------------------------------------- */
     var AD_TEXT_RE = /(advertisement|sponsored by|sponsorizzato|pubblicita|annun?cio pubbl)/i;
     var hiddenCount = 0;
 
@@ -54,7 +187,7 @@
         if (el.style.display === 'none') return;
         el.style.setProperty('display', 'none', 'important');
         hiddenCount++;
-        console.log(TAG, 'elemento nascosto:',
+        console.log(AD_TAG, 'elemento nascosto:',
             el.tagName.toLowerCase() +
             (el.className ? '.' + String(el.className).split(' ')[0] : ''),
             '(totale: ' + hiddenCount + ')');
@@ -62,19 +195,16 @@
 
     function cleanAds(root) {
         if (!root || !root.querySelectorAll) return;
-        // 1) candidati con attributi tipici degli ads
         var candidates = root.querySelectorAll(
             '[data-testid*="ad"], [aria-label*="dvertis"], [class*="ad-"], [class*="-ad"], .ad-container'
         );
         candidates.forEach(function (el) {
             if (looksLikeAd(el)) hideElement(el);
         });
-        // 2) span/div di testo breve che dicono "Advertisement"/"Sponsorizzato"
         var texts = root.querySelectorAll('span, div, p, h1, h2, h3, a');
         texts.forEach(function (el) {
             var t = (el.textContent || '').trim();
             if (t && t.length < 60 && AD_TEXT_RE.test(t)) {
-                // risali al contenitore diretto (slot banner), non al nodo foglia
                 var target = el.closest('section, aside, div[class], div[data-testid]') || el.parentElement || el;
                 if (target !== document.body && target !== document.documentElement) {
                     hideElement(target);
@@ -85,13 +215,63 @@
 
     window.__spotifyWrapperCleanAds = function () { cleanAds(document.body); };
 
-    // --- 3) MutationObserver: gli ads SPA arrivano dopo il caricamento ---
+    /* ----------------------------------------------------------
+     * TOUCH -> CLICK
+     * Alcuni widget desktop rispondono solo a mousedown/mouseup:
+     * al tap sintetizziamo la sequenza mouse completa sull'elemento
+     * sotto il dito, cosi\' l'azione parte subito.
+     * ---------------------------------------------------------- */
+    function synthesizeClickFromTouch(touch) {
+        var x = touch.clientX, y = touch.clientY;
+        var el = document.elementFromPoint(x, y);
+        if (!el || el === document.body) return;
+        var opts = {
+            bubbles: true, cancelable: true, view: window,
+            clientX: x, clientY: y, screenX: touch.screenX, screenY: touch.screenY,
+            button: 0, buttons: 1
+        };
+        try {
+            el.dispatchEvent(new MouseEvent('mousedown', opts));
+            el.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, opts, { buttons: 0 })));
+            el.dispatchEvent(new MouseEvent('click', Object.assign({}, opts, { buttons: 0 })));
+        } catch (e) {
+            console.log(UI_TAG, 'sintesi click fallita:', e.message);
+        }
+    }
+
+    function installTouchBridge() {
+        if (window.__spotifyWrapperTouchBridge) return;
+        window.__spotifyWrapperTouchBridge = true;
+        document.addEventListener('touchend', function (ev) {
+            var t = ev.changedTouches && ev.changedTouches[0];
+            if (!t) return;
+            var el = document.elementFromPoint(t.clientX, t.clientY);
+            // Solo elementi "non nativi clickable": se ha gia\' handler touch/pointer
+            // propri (es. slider del player) non interferiamo.
+            if (!el) return;
+            if (el.closest('input[type="range"], .progress-bar, [role="slider"]')) return;
+            // Se il browser ha gia\' generato un click reale, non duplicarlo.
+            if (ev.defaultPrevented) return;
+            synthesizeClickFromTouch(t);
+        }, { passive: true });
+        console.log(UI_TAG, 'bridge touch->click attivo');
+    }
+
+    /* ----------------------------------------------------------
+     * MUTATION OBSERVER UNIFICATO
+     * Riapplica stili/viewport/pulizia ads a ogni cambio DOM (SPA):
+     * Spotify rimuove il nostro <style> o riscrive il <head> durante
+     * le navigazioni interne, quindi va ri-verificato, non osservato
+     * una volta sola. Debounce via requestAnimationFrame.
+     * ---------------------------------------------------------- */
     var scheduled = false;
     var observer = new MutationObserver(function () {
         if (scheduled) return;
         scheduled = true;
         requestAnimationFrame(function () {
             scheduled = false;
+            applyStyles();
+            forceViewport();
             cleanAds(document.body);
         });
     });
@@ -103,21 +283,38 @@
             attributes: true,
             attributeFilter: ['data-testid', 'aria-label', 'class']
         });
-        console.log(TAG, 'MutationObserver attivo');
+        console.log(AD_TAG, 'MutationObserver attivo');
     }
 
-    cleanAds(document.body);
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function () {
+    /* ----------------------------------------------------------
+     * BOOTSTRAP
+     * ---------------------------------------------------------- */
+    function bootstrap() {
+        applyStyles();
+        forceViewport();
+        installTouchBridge();
+        cleanAds(document.body);
+        if (!window.__spotifyWrapperObserverStarted) {
+            window.__spotifyWrapperObserverStarted = true;
             startObserver();
-            cleanAds(document.body);
-        });
-    } else {
-        startObserver();
+        }
     }
 
-    // Pulizia periodica di sicurezza (nel caso di nodi mutati senza mutation visibili)
-    setInterval(function () { cleanAds(document.body); }, 5000);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', bootstrap);
+    } else {
+        bootstrap();
+    }
 
-    console.log(TAG, 'script anti-ads iniettato con successo');
+    // Pulizia periodica di sicurezza (nodi mutati senza mutation visibili)
+    if (!window.__spotifyWrapperHeartbeat) {
+        window.__spotifyWrapperHeartbeat = true;
+        setInterval(function () {
+            applyStyles();
+            forceViewport();
+            cleanAds(document.body);
+        }, 5000);
+    }
+
+    console.log(UI_TAG, 'userstyle/usercript applicati (ads-block + layout app-like)');
 })();
