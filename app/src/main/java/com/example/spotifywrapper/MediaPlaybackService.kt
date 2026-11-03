@@ -62,6 +62,22 @@ class MediaPlaybackService : Service() {
         @Volatile
         var onUserPaused: (() -> Unit)? = null
 
+        /** true tra onStart e onDestroy di MainActivity: serve a distinguere
+         *  activity "ferma in background" (process vivo) da activity distrutta. */
+        @Volatile
+        var mainActivityAlive: Boolean = false
+
+        /** Comando in attesa che il dispatcher venga ri-registrato (wake activity). */
+        @Volatile
+        var pendingCommand: String? = null
+
+        /** Utility per fermare la sessione dalla MainActivity (tasto Indietro/Stop). */
+        fun pauseWebPlayback(webView: android.webkit.WebView?) {
+            webView?.evaluateJavascript(
+                "window.__spotifyWrapperCmd && window.__spotifyWrapperCmd('pause');", null
+            )
+        }
+
         fun start(context: Context) {
             val intent = Intent(context, MediaPlaybackService::class.java)
             try {
@@ -125,6 +141,9 @@ class MediaPlaybackService : Service() {
 
     private var lastNotifUpdate = 0L
     private var notificationShown = false
+
+    /** Handler sul main thread per i retry del dispatcher (vedi sendCommandWithFallback). */
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private lateinit var mediaSession: MediaSessionCompat
     private var artworkLoader: ArtworkLoader? = null
@@ -247,9 +266,11 @@ class MediaPlaybackService : Service() {
 
     override fun onDestroy() {
         instance = null
+        handler.removeCallbacksAndMessages(null)
         NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID)
         dispatchToWebView = null
         onUserPaused = null
+        pendingCommand = null
         artworkLoader?.shutdown()
         mediaSession.release()
         super.onDestroy()
@@ -361,17 +382,43 @@ class MediaPlaybackService : Service() {
     }
 
     /**
-     * Il comando non arriva alla WebView quando l'activity e' distrutta o il
-     * dispatcher non e' registrato (es. task chiuso, activity ricreata): niente
-     * fallback possibile per una sessione basata su WebView, ma loggare aiuta
-     * a diagnosticare i pulsanti "muti".
+     * Fallback quando il dispatcher verso la WebView non e' registrato perche'
+     * l'activity e' stata distrutta (es. swipe via dalle Recents con process
+     * still alive): richiama MainActivity in SINGLE_TOP; onStart() fara' il
+     * rebind e registrera' il dispatcher, che invochera' subito questo comando
+     * in coda. La pagina web non viene ricaricata (configChanges + stato).
+     */
+    private fun wakeActivityForCommand(command: String) {
+        pendingCommand = command
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.w("MediaPlaybackService", "wake activity fallito", e)
+            pendingCommand = null
+        }
+    }
+
+    /**
+     * Invia un comando alla WebView. Se il dispatcher manca perche' l'activity
+     * e' solo STOPPED (process vivo), si ri-prova dopo 400ms prima di svegliarla.
      */
     private fun sendCommandWithFallback(command: String) {
-        if (dispatchToWebView == null) {
-            Log.w("MediaPlaybackService", "dispatcher assente: comando '$command' perso")
+        if (dispatchToWebView != null) {
+            sendCommand(command)
             return
         }
-        sendCommand(command)
+        if (mainActivityAlive) {
+            handler.postDelayed({
+                if (dispatchToWebView != null) sendCommand(command) else wakeActivityForCommand(command)
+            }, 400L)
+        } else {
+            wakeActivityForCommand(command)
+        }
     }
 
     private fun togglePlayPause() {
