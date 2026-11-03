@@ -222,6 +222,16 @@ class MainActivity : AppCompatActivity() {
         // Il servizio segnala al bridge quando la pausa e' stata richiesta
         // dall'utente (non dal web): autorizza l'onPause() "selettivo".
         MediaPlaybackService.onUserPaused = { userPausedPlayback = true }
+        // Comando arrivato mentre l'activity era distrutta (wake from notification):
+        // viene eseguito ora che la WebView e' di nuovo raggiungibile.
+        MediaPlaybackService.pendingCommand?.let { cmd ->
+            MediaPlaybackService.pendingCommand = null
+            binding.webView.post {
+                binding.webView.evaluateJavascript(
+                    "window.__spotifyWrapperCmd && window.__spotifyWrapperCmd('$cmd');", null
+                )
+            }
+        }
     }
 
     /** Interroga lo stato reale del player web (callback sul main thread). */
@@ -287,6 +297,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        MediaPlaybackService.mainActivityAlive = true
         askNotificationPermissionIfNeeded()
         bindMediaService()
     }
@@ -318,6 +329,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        // Se l'utente ha fermato la musica dalla notifica e poi ha lasciato
+        // l'app, zittisce anche il web player: evita un audio "fantasma" senza
+        // sessione/notifica attiva.
+        if (userPausedPlayback && lastWebPlaying) {
+            MediaPlaybackService.pauseWebPlayback(binding.webView)
+        }
         unbindMediaService()
         super.onStop()
     }
@@ -358,6 +375,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        MediaPlaybackService.mainActivityAlive = false
         MediaPlaybackService.dispatchToWebView = null
         MediaPlaybackService.onUserPaused = null
         unbindMediaService()
