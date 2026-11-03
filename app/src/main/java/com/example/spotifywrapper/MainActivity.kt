@@ -220,8 +220,21 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { binding.webView.evaluateJavascript(js, null) }
         }
         // Il servizio segnala al bridge quando la pausa e' stata richiesta
-        // dall'utente (non dal web): autorizza l'onPause() "selettivo".
-        MediaPlaybackService.onUserPaused = { userPausedPlayback = true }
+        // dall'utente (non dal web): autorizza l'onPause() "selettivo" e
+        // disattiva il keep-alive audio iniettato (flag JS condiviso).
+        MediaPlaybackService.onUserPaused = {
+            userPausedPlayback = true
+            binding.webView.evaluateJavascript(
+                "window.__spotifyWrapperUserPaused = true;", null
+            )
+        }
+        // Pausa NON utente (es. resume da play su UI web): riattiva il keep-alive.
+        MediaPlaybackService.onUserResumed = {
+            userPausedPlayback = false
+            binding.webView.evaluateJavascript(
+                "window.__spotifyWrapperUserPaused = false;", null
+            )
+        }
         // Comando arrivato mentre l'activity era distrutta (wake from notification):
         // viene eseguito ora che la WebView e' di nuovo raggiungibile.
         MediaPlaybackService.pendingCommand?.let { cmd ->
@@ -389,6 +402,7 @@ class MainActivity : AppCompatActivity() {
         MediaPlaybackService.mainActivityAlive = false
         MediaPlaybackService.dispatchToWebView = null
         MediaPlaybackService.onUserPaused = null
+        MediaPlaybackService.onUserResumed = null
         unbindMediaService()
         AndroidMediaBridge.resetServiceFlag()
         // Stacco la WebView dal view tree PRIMA di destroy(): evita il leak

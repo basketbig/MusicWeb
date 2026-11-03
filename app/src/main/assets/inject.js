@@ -34,8 +34,13 @@
 
     // --- 2) CSS "app-like" per il tocco su mobile ---
     var uiCss = [
-        /* Reattivita': niente ritardo 300ms sui tap */
+        /* Reattivita': niente ritardo 300ms sui tap. Il selettore * non basta:
+           alcuni widget desktop impostano touch-action proprio/ereditato, quindi
+           lo forziamo !important anche su TUTTI gli elementi interattivi. */
         '*, *::before, *::after { touch-action: manipulation; }',
+        'a, button, [role="button"], input, select, textarea, label, summary,',
+        '[tabindex], [data-testid], .Button, [draggable="true"]',
+        '{ touch-action: manipulation !important; }',
 
         /* Niente selezione accidentale del testo (input esclusi) */
         '*, *::before, *::after {',
@@ -379,6 +384,28 @@
             forceViewport();
             cleanAds(document.body);
         }, 5000);
+    }
+
+    /* ----------------------------------------------------------
+     * KEEP-ALIVE AUDIO (anti-sospensione WebView)
+     * Alcune build Chromium mettono in pausa gli HTMLMediaElement
+     * quando la finestra e' oscurata, nonostante lo spoof di
+     * visibility. Se il web player risulta fermo MA l'app nativa
+     * non ha registrato una pausa utente (__spotifyWrapperUserPaused),
+     * riavviamo l'elemento audio: la musica continua a schermo
+     * spento e la sessione Spotify resta online dal PC.
+     * ---------------------------------------------------------- */
+    if (!window.__spotifyWrapperAudioKeepAlive) {
+        window.__spotifyWrapperAudioKeepAlive = true;
+        setInterval(function () {
+            var a = document.querySelector('audio');
+            if (!a || !a.paused || a.ended) return;
+            // Pausa voluta dall'utente (notifica/UI): non insistere.
+            if (window.__spotifyWrapperUserPaused) return;
+            console.log(UI_TAG, 'audio fermato dal sistema: riavvio keep-alive');
+            var p = a.play();
+            if (p && p.catch) p.catch(function () { /* gesture policy: ignora */ });
+        }, 2000);
     }
 
     console.log(UI_TAG, 'userstyle/usercript applicati (ads-block + layout app-like)');

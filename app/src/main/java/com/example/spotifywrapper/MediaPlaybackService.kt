@@ -67,6 +67,11 @@ class MediaPlaybackService : Service() {
         @Volatile
         var onUserPaused: (() -> Unit)? = null
 
+        /** Segnala alla MainActivity che la riproduzione e' ripresa (play da
+         *  notifica o comando play): azzera userPausedPlayback e il keep-alive JS. */
+        @Volatile
+        var onUserResumed: (() -> Unit)? = null
+
         /** true tra onStart e onDestroy di MainActivity: serve a distinguere
          *  activity "ferma in background" (process vivo) da activity distrutta. */
         @Volatile
@@ -178,7 +183,10 @@ class MediaPlaybackService : Service() {
 
         mediaSession = MediaSessionCompat(this, "SpotifyWrapperSession").apply {
             setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() = sendCommandWithFallback("play")
+                override fun onPlay() {
+                    onUserResumed?.invoke()
+                    sendCommandWithFallback("play")
+                }
                 override fun onPause() {
                     onUserPaused?.invoke()
                     sendCommandWithFallback("pause")
@@ -315,6 +323,7 @@ class MediaPlaybackService : Service() {
         NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID)
         dispatchToWebView = null
         onUserPaused = null
+        onUserResumed = null
         pendingCommand = null
         artworkLoader?.shutdown()
         mediaSession.release()
@@ -470,7 +479,7 @@ class MediaPlaybackService : Service() {
 
     private fun togglePlayPause() {
         val cmd = if (currentlyPlaying) "pause" else "play"
-        if (cmd == "pause") onUserPaused?.invoke()
+        if (cmd == "pause") onUserPaused?.invoke() else onUserResumed?.invoke()
         sendCommandWithFallback(cmd)
     }
 
