@@ -3,13 +3,19 @@
 
     <!-- Internet permission is required to load the Spotify web player -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- FOREGROUND_SERVICE e il suo tipo mediaPlayback richiedono API 28+ -->
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE"
-        android:maxSdkVersion="34" />
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
-        android:maxSdkVersion="34" />
+
+    <!--
+        FOREGROUND_SERVICE: richiesto da ogni startForeground() su API 28+ (P).
+        Il permesso viene concesso automaticamente all'installazione (normal
+        permission), ma DEVE essere dichiarato o il sistema lancia
+        SecurityException: "startForeground ... requires
+        android.permission.FOREGROUND_SERVICE" (il crash visto su Android 14).
+        Attenzione: qui maxSdkVersion/minSdkVersion NON vanno mai messi.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Tipo FGS mediaPlayback: obbligatorio da Android 14 (API 34), introdotto API 29 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Necessario per mostrare la notifica su Android 13+ (runtime permission) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application

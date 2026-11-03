@@ -8,4 +8,6 @@
     <string name="notif_pause">Pausa</string>
     <string name="notif_prev">Brano precedente</string>
     <string name="notif_next">Brano successivo</string>
+    <string name="notif_playing">Riproduzione in corso</string>
+    <string name="notif_stop">Fermi la riproduzione</string>
 </resources>
