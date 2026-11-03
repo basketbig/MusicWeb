@@ -174,9 +174,17 @@
 
     window.__spotifyWrapperCmd = function (cmd) {
         console.log(TAG, 'comando ricevuto:', cmd);
+        // Il flag vive su window (condiviso con inject.js): dice al keep-alive
+        // audio se la pausa e' voluta dall'utente o subita dal sistema.
         switch (cmd) {
-            case 'play':  cmdPlayPause(true); break;
-            case 'pause': cmdPlayPause(false); break;
+            case 'play':
+                window.__spotifyWrapperUserPaused = false;
+                cmdPlayPause(true);
+                break;
+            case 'pause':
+                window.__spotifyWrapperUserPaused = true;
+                cmdPlayPause(false);
+                break;
             case 'next':
                 if (!pressButton('control-button-skip-next')) {
                     var a = firstAudio();
