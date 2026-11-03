@@ -81,7 +81,16 @@ class MainActivity : AppCompatActivity() {
             useWideViewPort = true
             loadWithOverviewMode = true
             userAgentString = DESKTOP_UA
+
+            // UI app-like: lo zoom (pizzico/doppiotap) confligge con il layout
+            // desktop forzato; inject.js imposta comunque maximum-scale=1.
+            setSupportZoom(false)
+            builtInZoomControls = false
+            displayZoomControls = false
         }
+
+        // Disabilita lo zoom da gestore touch a livello di WebView (pinch + double-tap).
+        binding.webView.setOnTouchListener { v, _ -> v.performClick(); false }
 
         // Bridge JS -> notifica media nativa (window.AndroidMediaBridge)
         binding.webView.addJavascriptInterface(
@@ -124,13 +133,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Tasto indietro: se la WebView puo' tornare indietro lo fa, altrimenti chiude l'app.
+        // Tasto indietro: WebView se puo' tornare indietro; altrimenti doppia
+        // pressione con Toast per uscire (anti-uscita accidentale).
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (binding.webView.canGoBack()) {
                     binding.webView.goBack()
                 } else {
-                    finish()
+                    handleExitBack()
                 }
             }
         })
@@ -141,6 +151,20 @@ class MainActivity : AppCompatActivity() {
             }
         } else {
             binding.webView.loadUrl(SPOTIFY_URL)
+        }
+    }
+
+    /** Doppia pressione di Indietro per uscire: Toast + finestra di 2 secondi. */
+    private var lastBackExitTime = 0L
+    private fun handleExitBack() {
+        val now = System.currentTimeMillis()
+        if (now - lastBackExitTime < 2000L) {
+            finish()
+        } else {
+            lastBackExitTime = now
+            android.widget.Toast.makeText(
+                this, "Premi di nuovo per uscire", android.widget.Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
