@@ -13,6 +13,7 @@ import android.view.View
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -148,7 +149,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         // Il pulsante "Stop" della notifica punta a questa activity perche' il
         // servizio e' exported=false e non puo' ricevere PendingIntent getService.
-        if (intent.action == MediaPlaybackService.ACTION_STOP) {
+        if (intent?.action == MediaPlaybackService.ACTION_STOP) {
             AndroidMediaBridge.resetServiceFlag()
             MediaPlaybackService.stop(this)
             intent.action = null
