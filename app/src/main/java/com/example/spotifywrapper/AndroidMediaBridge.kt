@@ -18,6 +18,16 @@ class AndroidMediaBridge(
     private val onStateChanged: ((Boolean) -> Unit)? = null
 ) {
 
+    /**
+     * Chiamato da inject.js quando un campo del DOM riceve/perde il focus.
+     * Serve alla MainActivity per sapere se la tastiera e' legata a un input
+     * web (il tasto Indietro deve chiudere la IMM, non navigare).
+     */
+    @JavascriptInterface
+    fun onFocusChanged(isInput: Boolean) {
+        (context as? MainActivity)?.onDomFocusChanged(isInput)
+    }
+
     @JavascriptInterface
     fun updatePlaybackState(json: String?) {
         if (json.isNullOrBlank()) return
