@@ -111,31 +111,33 @@ class MainActivity : AppCompatActivity() {
             // WebSettingsCompat riscrive i Client Hints lato Chromium cosi' la
             // fingerprint coincide con Chrome desktop (mobile=false, Windows).
             if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
-                // API reali di androidx.webkit (1.7+): il builder NON ha setBrand(),
-                // esiste solo setBrandListVersion(List<Pair<String,String>>) con
-                // android.util.Pair. Versione completa e major version separate.
+                // API VERIFICATE sul bytecode reale di androidx.webkit:webkit (javap):
+                //   UserAgentMetadata.Builder().setBrandVersionList(List<UserAgentMetadata.BrandVersion>)
+                //   UserAgentMetadata.BrandVersion.Builder().setBrand/setMajorVersion/setFullVersion
+                // NON esistono setBrandListVersion / setFullVersionListVersion ne' Pair.
+                fun bv(brand: String, major: String, full: String) =
+                    UserAgentMetadata.BrandVersion.Builder()
+                        .setBrand(brand)
+                        .setMajorVersion(major)
+                        .setFullVersion(full)
+                        .build()
+
                 val metadata = UserAgentMetadata.Builder()
-                    .setBrandListVersion(
+                    .setBrandVersionList(
                         listOf(
-                            Pair("Chromium", "120"),
-                            Pair("Google Chrome", "120"),
-                            Pair("Not?A_Brand", "24")
-                        )
-                    )
-                    .setFullVersionListVersion(
-                        listOf(
-                            Pair("Chromium", "120.0.6099.230"),
-                            Pair("Google Chrome", "120.0.6099.230"),
-                            Pair("Not?A_Brand", "24.0.0.0")
+                            bv("Chromium", "120", "120.0.6099.230"),
+                            bv("Google Chrome", "120", "120.0.6099.230"),
+                            bv("Not?A_Brand", "24", "24.0.0.0")
                         )
                     )
                     .setFullVersion("120.0.6099.230")
-                    .setMajorVersion("120")
                     .setMobile(false)              // IMPORTANTISSIMO: NON mobile
                     .setPlatform("Windows")
                     .setPlatformVersion("15.0.0")
                     .setArchitecture("x86")
                     .setModel("")
+                    .setBitness(64)
+                    .setWow64(false)
                     .build()
                 WebSettingsCompat.setUserAgentMetadata(this, metadata)
             }
