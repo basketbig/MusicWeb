@@ -44,12 +44,11 @@ class AndroidMediaBridge(
                 serviceStarted = true
                 MediaPlaybackService.start(context)
             }
-            if (!serviceStarted) return // niente sessione attiva: non creare notifiche a vuoto
+            // Non fare `return` se il servizio non e' ancora nato: update()
+            // incapsula i dati nell'Intent di startForegroundService e il
+            // servizio li legge in onStartCommand. Droppare il primo battito
+            // significava notifica "vuota" fino al heartbeat successivo.
             requestNotificationPermissionIfNeeded()
-
-            // Se il servizio non e' ancora nato (startForegroundService e' asincrona),
-            // salta questo battito: il prossimo heartbeat lo intercettera' vivo.
-            if (isPlaying && MediaPlaybackService.peekInstance() == null) return
 
             MediaPlaybackService.update(
                 context = context,
