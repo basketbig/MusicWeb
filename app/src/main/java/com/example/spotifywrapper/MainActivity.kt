@@ -103,11 +103,15 @@ class MainActivity : AppCompatActivity() {
             displayZoomControls = false
         }
 
-        // Reattivita' al tocco: niente focus/ripple della WebView (intercettano
-        // i primi eventi touch e mostrano il highlight grigio sul desktop layout);
-        // il focus per la tastiera resta garantito da requestFocusNodeHref.
-        binding.webView.isFocusable = false
-        binding.webView.isFocusableInTouchMode = false
+        // FIX TASTIERA: NON disabilitare mai isFocusable/isFocusableInTouchMode.
+        // Erano stati messi a false per la reattivita'/tasti multimediali, ma una
+        // WebView non focusabile non puo' dare il focus ai campi <input> del DOM:
+        // Android non mostra piu' la IMM (login/ricerca impossibili). La reattivita'
+        // e' ormai garantita da touch-action:manipulation + viewport maximum-scale=1
+        // (inject.js) e dal setSupportZoom(false) sopra; i tasti multimediali sono
+        // gestiti dalla MediaSessionCompat nel servizio, non dal focus della view.
+        binding.webView.isFocusable = true
+        binding.webView.isFocusableInTouchMode = true
         binding.webView.setBackgroundColor(Color.TRANSPARENT)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             binding.webView.overScrollMode = View.OVER_SCROLL_NEVER
@@ -153,6 +157,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            // FIX TASTIERA: quando un campo del DOM chiede il focus, la WebView
+            // deve essere lei a detenerlo perche' la IMM si apra. Con layout
+            // full-screen e nessun EditText nativo, showSoftInput() da solo non
+            // basta se la view non e' gia' focalizzata: forzarlo qui rende la
+            // tastiera affidabile al primo tap su login/ricerca.
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                super.onShowCustomView(view, callback)
+                binding.webView.requestFocus()
+            }
+
             override fun onProgressChanged(view: android.webkit.WebView?, newProgress: Int) {
                 binding.progressBar.progress = newProgress
                 binding.progressBar.visibility =
@@ -160,10 +174,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Tasto indietro: WebView se puo' tornare indietro; altrimenti doppia
-        // pressione con Toast per uscire (anti-uscita accidentale).
+        // Tasto indietro: PRIMA chiude la tastiera (se aperta), POI la cronologia
+        // della WebView, infine doppia pressione con Toast per uscire.
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (hideKeyboardIfOpen()) return
                 if (binding.webView.canGoBack()) {
                     binding.webView.goBack()
                 } else {
@@ -179,6 +194,34 @@ class MainActivity : AppCompatActivity() {
         } else {
             binding.webView.loadUrl(SPOTIFY_URL)
         }
+    }
+
+    /**
+     * Chiude la tastiera se visibile e toglie il focus al campo del DOM.
+     * Ritorna true se ha gestito lei la pressione (niente goBack in tal caso).
+     * Detection: il focus bridge JS (inject.js -> AndroidMediaBridge.onFocusChanged)
+     * dice se un input web e' attivo; la geometria del layout (adjustResize)
+     * conferma che la IMM e' davvero mostrata.
+     */
+    private fun hideKeyboardIfOpen(): Boolean {
+        if (!domActiveElementIsInput) return false
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+            as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(window.decorView.windowToken, 0)
+        binding.webView.evaluateJavascript(
+            "try{document.activeElement&&document.activeElement.blur();}catch(e){}", null
+        )
+        domActiveElementIsInput = false
+        return true
+    }
+
+    /** Aggiornato dall'hook JS (vedi inject.js): true se un campo DOM ha il focus. */
+    @Volatile
+    private var domActiveElementIsInput = false
+
+    /** Chiamata dal JavascriptInterface AndroidMediaBridge.onFocusChanged. */
+    fun onDomFocusChanged(isInput: Boolean) {
+        runOnUiThread { domActiveElementIsInput = isInput }
     }
 
     /** Doppia pressione di Indietro per uscire: Toast + finestra di 2 secondi. */

@@ -48,10 +48,22 @@
         '  user-select: none;',
         '  -webkit-touch-callout: none;',
         '}',
-        'input, textarea, [contenteditable="true"], [role="textbox"] {',
-        '  -webkit-user-select: text;',
-        '  user-select: text;',
+        /* FIX TASTIERA: i campi di testo DEVONO restare interattivi. Le regole
+           sopra (user-select/touch-action globali) possono interferire con il
+           focus e la selezione in editazione: qui li riabilitiamo con
+           !important, cosi' il tap su un input da sempre il focus e apre la IMM. */
+        'input, textarea, select, [contenteditable="true"], [role="textbox"], [role="searchbox"] {',
+        '  -webkit-user-select: text !important;',
+        '  user-select: text !important;',
+        '  touch-action: auto !important;',
         '}',
+
+        /* FIX TASTIERA (Android/WebView): niente zoom del layout quando la IMM
+           si apre. Con adjustResize+useWideViewPort Chromium "ricalcola" il
+           viewport e la pagina desktop appare zoomata/fuori scala: force-zero
+           zoom su html/body mantiene il layout stabile durante la digitazione. */
+        'html, body { zoom: 1 !important; }',
+        'body[data-ime-open="true"] { overflow: hidden !important; }',
 
         /* Scrollbar invisibili ma scroll funzionante */
         '::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none; }',
@@ -262,6 +274,11 @@
             if (!t) return;
             var el = document.elementFromPoint(t.clientX, t.clientY);
             if (!el || el === document.body) return;
+            // FIX TASTIERA: mai sintetizzare click su campi di testo. La sintesi
+            // su touchstart fa scattare il default del browser PRIMA che Chromium
+            // registri il focus sull'input: la tastiera non si apre. Lasciamo
+            // passare il tap nativo (e' quello che apre la IMM).
+            if (el.closest('input, textarea, select, [contenteditable="true"], [role="textbox"], [role="searchbox"]')) return;
             // Slider del player: hanno handler pointer propri, non toccarli.
             if (el.closest('input[type="range"], .progress-bar, [role="slider"]')) return;
             // Solo elementi interattivi: niente sintesi su testo/card passive.
@@ -275,6 +292,13 @@
             // Evita SOLO il click nativo ritardato di Chromium: i nostri eventi
             // sintetici portano il marker e devono propagarsi.
             if (ev.isTrustedWrapper || !ev.isTrusted) return;
+            // FIX TASTIERA: non neutralizzare MAI i click nativi su input/textarea:
+            // sono l'unico modo con cui Chromium trasferisce il focus al campo e
+            // mostra la tastiera. Se li bloccassimo, login/ricerca resterebbero muti.
+            var tgt = ev.target;
+            if (tgt && tgt.closest && tgt.closest(
+                'input, textarea, select, [contenteditable="true"], [role="textbox"], [role="searchbox"]'
+            )) return;
             if (Date.now() - lastSynthAt < 700) {
                 ev.stopPropagation();
                 ev.preventDefault();
@@ -282,6 +306,41 @@
         }, true);
 
         console.log(UI_TAG, 'bridge touch->click attivo (first-touch)');
+    }
+
+    /* ----------------------------------------------------------
+     * FOCUS BRIDGE (per il tasto Indietro "intelligente")
+     * Notifica l'activity quando un campo del DOM riceve o perde il
+     * focus, cosi' MainActivity sa se la pressione di Indietro deve
+     * chiudere la tastiera (IMM) invece di navigare nella cronologia.
+     * ---------------------------------------------------------- */
+    function installFocusBridge() {
+        if (window.__spotifyWrapperFocusBridge) return;
+        window.__spotifyWrapperFocusBridge = true;
+        var INPUT_SEL = 'input, textarea, select, [contenteditable="true"], [role="textbox"], [role="searchbox"]';
+
+        function notifyFocus(el) {
+            if (typeof AndroidMediaBridge === 'undefined' ||
+                !AndroidMediaBridge.onFocusChanged) return;
+            try {
+                AndroidMediaBridge.onFocusChanged(!!(el && el.closest && el.closest(INPUT_SEL)));
+            } catch (e) { /* bridge non pronto: ignora */ }
+        }
+
+        // focusin/focusout bubbles: coprono anche i nodi creati dinamicamente.
+        document.addEventListener('focusin', function (ev) {
+            notifyFocus(ev.target);
+        }, true);
+        document.addEventListener('focusout', function (ev) {
+            // Piccolo ritardo: se lo spostamento e' tra due campi vicini,
+            // focusin del nuovo campo arriva prima e sovrascrive correttamente.
+            setTimeout(function () {
+                var ae = document.activeElement;
+                notifyFocus(ae && ae !== document.body ? ae : null);
+            }, 120);
+        }, true);
+
+        console.log(UI_TAG, 'focus bridge attivo');
     }
 
     /* ----------------------------------------------------------
@@ -363,6 +422,7 @@
         applyStyles();
         forceViewport();
         installTouchBridge();
+        installFocusBridge();
         cleanAds(document.body);
         if (!window.__spotifyWrapperObserverStarted) {
             window.__spotifyWrapperObserverStarted = true;
