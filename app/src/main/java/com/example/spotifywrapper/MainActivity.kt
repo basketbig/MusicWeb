@@ -111,8 +111,24 @@ class MainActivity : AppCompatActivity() {
             // WebSettingsCompat riscrive i Client Hints lato Chromium cosi' la
             // fingerprint coincide con Chrome desktop (mobile=false, Windows).
             if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+                // API reali di androidx.webkit (1.7+): il builder NON ha setBrand(),
+                // esiste solo setBrandListVersion(List<Pair<String,String>>) con
+                // android.util.Pair. Versione completa e major version separate.
                 val metadata = UserAgentMetadata.Builder()
-                    .setBrand("\"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\", \"Not?A_Brand\";v=\"24\"")
+                    .setBrandListVersion(
+                        listOf(
+                            Pair("Chromium", "120"),
+                            Pair("Google Chrome", "120"),
+                            Pair("Not?A_Brand", "24")
+                        )
+                    )
+                    .setFullVersionListVersion(
+                        listOf(
+                            Pair("Chromium", "120.0.6099.230"),
+                            Pair("Google Chrome", "120.0.6099.230"),
+                            Pair("Not?A_Brand", "24.0.0.0")
+                        )
+                    )
                     .setFullVersion("120.0.6099.230")
                     .setMajorVersion("120")
                     .setMobile(false)              // IMPORTANTISSIMO: NON mobile
