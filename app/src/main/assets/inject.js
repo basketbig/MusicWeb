@@ -156,13 +156,103 @@
             el.id = id;
             el.appendChild(document.createTextNode(cssText));
             (document.head || document.documentElement).appendChild(el);
+        } else {
+            // Il contenuto puo' cambiare a caldo (nuovo tema/visibilita'):
+            // sovrascriviamo sempre il testo del nodo esistente.
+            var existing = document.getElementById(id);
+            existing.textContent = cssText;
         }
+    }
+
+    /* ----------------------------------------------------------
+     * PREFERENZE DI PERSONALIZZAZIONE (temi + visibilita')
+     * Lette dal bridge nativo AndroidPrefsBridge.getPrefs() (JSON).
+     * I temi lavorano sugli CSS custom property di Spotify
+     * (--background-base, --text-base, ecc.) cosi' non dipendono
+     * dalle classi, che cambiano spesso.
+     * ---------------------------------------------------------- */
+    var DEFAULT_PREFS = { theme: 'default', hideNowPlaying: false, hideSidebar: false, biggerFonts: false };
+    var prefsCache = Object.assign({}, DEFAULT_PREFS);
+
+    function readPrefs() {
+        try {
+            if (window.AndroidPrefsBridge && AndroidPrefsBridge.getPrefs) {
+                return Object.assign({}, DEFAULT_PREFS, JSON.parse(AndroidPrefsBridge.getPrefs()));
+            }
+        } catch (e) {
+            console.log(UI_TAG, 'lettura preferenze fallita:', e.message);
+        }
+        return Object.assign({}, DEFAULT_PREFS);
+    }
+
+    function buildThemeCss(theme) {
+        if (theme === 'amoled') {
+            return [
+                ':root {',
+                '  --background-base: #000000 !important;',
+                '  --background-highlight: #121212 !important;',
+                '  --background-press: #000000 !important;',
+                '  --backdrop-base: #000000 !important;',
+                '  --decorative-base: #000000 !important;',
+                '}',
+                'body, html, .main-view, #main, .Root, .Root__main-view,',
+                '.main-topBar-container, .main-leftNav-container, footer',
+                '{ background-color: #000000 !important; }'
+            ].join('\n');
+        }
+        if (theme === 'dark_violet') {
+            return [
+                ':root {',
+                '  --background-base: #14081f !important;',
+                '  --background-highlight: #23103a !important;',
+                '  --background-press: #0d0516 !important;',
+                '  --text-base: #f2e9fb !important;',
+                '  --misc-on-notification-default: #f2e9fb !important;',
+                '}',
+                'body, html, .main-view, #main, .Root, .Root__main-view',
+                '{ background-color: #14081f !important; }',
+                '[data-testid="play-button"], .main-playButton-primary button',
+                '{ background-color: #8b3fd6 !important; color: #ffffff !important; }'
+            ].join('\n');
+        }
+        return ''; /* default: nessun override */
+    }
+
+    function buildVisibilityCss(p) {
+        var rules = [];
+        if (p.hideNowPlaying) {
+            rules.push('aside[data-testid="now-playing-widget"] { display: none !important; }');
+        }
+        if (p.hideSidebar) {
+            rules.push(
+                '.Root__nav, nav[role="navigation"], aside[role="navigation"],',
+                '.LeftNav, .main-leftNav-container',
+                '{ display: none !important; }'
+            );
+        }
+        if (p.biggerFonts) {
+            rules.push(
+                'html { font-size: 112.5% !important; }',
+                '.encore-informative-text, .encore-bold-text-element { letter-spacing: 0.01em; }',
+                'footer button { min-width: 48px !important; min-height: 48px !important; }'
+            );
+        }
+        return rules.join('\n');
     }
 
     function applyStyles() {
         injectStyle('spotify-wrapper-adblock-css', adCss);
         injectStyle('spotify-wrapper-ui-css', uiCss);
+        injectStyle('spotify-wrapper-theme-css', buildThemeCss(prefsCache.theme));
+        injectStyle('spotify-wrapper-visibility-css', buildVisibilityCss(prefsCache));
     }
+
+    /** API interna: MainActivity la chiama quando le preferenze cambiano. */
+    window.__spotifyWrapperApplyPrefs = function () {
+        prefsCache = readPrefs();
+        applyStyles();
+        console.log(UI_TAG, 'preferenze applicate:', JSON.stringify(prefsCache));
+    };
 
     /* ----------------------------------------------------------
      * VIEWPORT FORZATO
@@ -419,6 +509,7 @@
      * ---------------------------------------------------------- */
     function bootstrap() {
         installVisibilitySpoof();
+        prefsCache = readPrefs();
         applyStyles();
         forceViewport();
         installTouchBridge();

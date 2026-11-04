@@ -178,6 +178,18 @@ class MainActivity : AppCompatActivity() {
             AndroidMediaBridge.INTERFACE_NAME
         )
 
+        // Bridge preferenze -> pagina (window.AndroidPrefsBridge.getPrefs()):
+        // inject.js legge temi/flag di visibilita' senza ricaricare la WebView.
+        binding.webView.addJavascriptInterface(
+            AndroidPrefsBridge(this),
+            AndroidPrefsBridge.INTERFACE_NAME
+        )
+
+        // Pulsante flottante: apre la schermata di personalizzazione.
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
         binding.webView.webViewClient = SpotifyWebViewClient(
             context = this,
             onProgress = { progress ->
@@ -297,13 +309,29 @@ class MainActivity : AppCompatActivity() {
     @Suppress("DEPRECATION") // firma nullable: non-nullable solo da appcompat 1.7 (compileSdk 35)
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        // Il pulsante "Stop" della notifica punta a questa activity perche' il
-        // servizio e' exported=false e non puo' ricevere PendingIntent getService.
-        if (intent?.action == MediaPlaybackService.ACTION_STOP) {
-            AndroidMediaBridge.resetServiceFlag()
-            MediaPlaybackService.stop(this)
-            intent.action = null
+        when (intent?.action) {
+            // Il pulsante "Stop" della notifica punta a questa activity perche' il
+            // servizio e' exported=false e non puo' ricevere PendingIntent getService.
+            MediaPlaybackService.ACTION_STOP -> {
+                AndroidMediaBridge.resetServiceFlag()
+                MediaPlaybackService.stop(this)
+                intent.action = null
+            }
+            // La schermata impostazioni (singleTop qui sopra) segnala che le
+            // preferenze sono cambiate: ri-applica temi/visibilita' a caldo,
+            // senza ricaricare la pagina (la riproduzione non si interrompe).
+            SettingsActivity.ACTION_PREFS_CHANGED -> {
+                applyPrefsToPage()
+                intent.action = null
+            }
         }
+    }
+
+    /** Fa rileggere a inject.js le preferenze aggiornate dal bridge nativo. */
+    private fun applyPrefsToPage() {
+        binding.webView.evaluateJavascript(
+            "window.__spotifyWrapperApplyPrefs && window.__spotifyWrapperApplyPrefs();", null
+        )
     }
 
     /** I pulsanti della notifica finiscono qui: esegue il JS nella WebView. */
@@ -488,6 +516,10 @@ class MainActivity : AppCompatActivity() {
         // Se eravamo usciti per pausa utente, al rientro la WebView va riattivata;
         // lo stato play/pause del web player resta quello scelto dall'utente.
         userPausedPlayback = false
+        // Le preferenze possono essere cambiate mentre le impostazioni erano
+        // aperte: al rientro i temi/flag vengono sempre ri-sincronizzati
+        // (idempotente: inject.js rilegge AndroidPrefsBridge.getPrefs()).
+        applyPrefsToPage()
     }
 
     override fun onDestroy() {
