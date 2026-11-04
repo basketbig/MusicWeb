@@ -10,4 +10,15 @@
     <string name="notif_next">Brano successivo</string>
     <string name="notif_playing">Riproduzione in corso</string>
     <string name="notif_stop">Fermi la riproduzione</string>
+
+    <!-- Impostazioni / personalizzazione -->
+    <string name="settings_title">Impostazioni</string>
+    <string name="settings_theme_title">Tema colore</string>
+    <string name="settings_theme_default">Default</string>
+    <string name="settings_theme_amoled">AMOLED Nero</string>
+    <string name="settings_theme_violet">Viola Scuro</string>
+    <string name="settings_elements_title">Nascondi elementi</string>
+    <string name="settings_hide_now_playing">Nascondi pannello Now Playing</string>
+    <string name="settings_hide_sidebar">Nascondi barra laterale</string>
+    <string name="settings_bigger_fonts">Font più grandi</string>
 </resources>

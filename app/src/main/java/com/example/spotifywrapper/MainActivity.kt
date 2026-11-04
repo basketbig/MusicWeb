@@ -111,31 +111,33 @@ class MainActivity : AppCompatActivity() {
             // WebSettingsCompat riscrive i Client Hints lato Chromium cosi' la
             // fingerprint coincide con Chrome desktop (mobile=false, Windows).
             if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
-                // API reali di androidx.webkit (1.7+): il builder NON ha setBrand(),
-                // esiste solo setBrandListVersion(List<Pair<String,String>>) con
-                // android.util.Pair. Versione completa e major version separate.
+                // API VERIFICATE sul bytecode reale di androidx.webkit:webkit (javap):
+                //   UserAgentMetadata.Builder().setBrandVersionList(List<UserAgentMetadata.BrandVersion>)
+                //   UserAgentMetadata.BrandVersion.Builder().setBrand/setMajorVersion/setFullVersion
+                // NON esistono setBrandListVersion / setFullVersionListVersion ne' Pair.
+                fun bv(brand: String, major: String, full: String) =
+                    UserAgentMetadata.BrandVersion.Builder()
+                        .setBrand(brand)
+                        .setMajorVersion(major)
+                        .setFullVersion(full)
+                        .build()
+
                 val metadata = UserAgentMetadata.Builder()
-                    .setBrandListVersion(
+                    .setBrandVersionList(
                         listOf(
-                            Pair("Chromium", "120"),
-                            Pair("Google Chrome", "120"),
-                            Pair("Not?A_Brand", "24")
-                        )
-                    )
-                    .setFullVersionListVersion(
-                        listOf(
-                            Pair("Chromium", "120.0.6099.230"),
-                            Pair("Google Chrome", "120.0.6099.230"),
-                            Pair("Not?A_Brand", "24.0.0.0")
+                            bv("Chromium", "120", "120.0.6099.230"),
+                            bv("Google Chrome", "120", "120.0.6099.230"),
+                            bv("Not?A_Brand", "24", "24.0.0.0")
                         )
                     )
                     .setFullVersion("120.0.6099.230")
-                    .setMajorVersion("120")
                     .setMobile(false)              // IMPORTANTISSIMO: NON mobile
                     .setPlatform("Windows")
                     .setPlatformVersion("15.0.0")
                     .setArchitecture("x86")
                     .setModel("")
+                    .setBitness(64)
+                    .setWow64(false)
                     .build()
                 WebSettingsCompat.setUserAgentMetadata(this, metadata)
             }
@@ -175,6 +177,18 @@ class MainActivity : AppCompatActivity() {
             AndroidMediaBridge(this, ::onWebPlaybackState),
             AndroidMediaBridge.INTERFACE_NAME
         )
+
+        // Bridge preferenze -> pagina (window.AndroidPrefsBridge.getPrefs()):
+        // inject.js legge temi/flag di visibilita' senza ricaricare la WebView.
+        binding.webView.addJavascriptInterface(
+            AndroidPrefsBridge(this),
+            AndroidPrefsBridge.INTERFACE_NAME
+        )
+
+        // Pulsante flottante: apre la schermata di personalizzazione.
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
 
         binding.webView.webViewClient = SpotifyWebViewClient(
             context = this,
@@ -295,13 +309,29 @@ class MainActivity : AppCompatActivity() {
     @Suppress("DEPRECATION") // firma nullable: non-nullable solo da appcompat 1.7 (compileSdk 35)
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        // Il pulsante "Stop" della notifica punta a questa activity perche' il
-        // servizio e' exported=false e non puo' ricevere PendingIntent getService.
-        if (intent?.action == MediaPlaybackService.ACTION_STOP) {
-            AndroidMediaBridge.resetServiceFlag()
-            MediaPlaybackService.stop(this)
-            intent.action = null
+        when (intent?.action) {
+            // Il pulsante "Stop" della notifica punta a questa activity perche' il
+            // servizio e' exported=false e non puo' ricevere PendingIntent getService.
+            MediaPlaybackService.ACTION_STOP -> {
+                AndroidMediaBridge.resetServiceFlag()
+                MediaPlaybackService.stop(this)
+                intent.action = null
+            }
+            // La schermata impostazioni (singleTop qui sopra) segnala che le
+            // preferenze sono cambiate: ri-applica temi/visibilita' a caldo,
+            // senza ricaricare la pagina (la riproduzione non si interrompe).
+            SettingsActivity.ACTION_PREFS_CHANGED -> {
+                applyPrefsToPage()
+                intent.action = null
+            }
         }
+    }
+
+    /** Fa rileggere a inject.js le preferenze aggiornate dal bridge nativo. */
+    private fun applyPrefsToPage() {
+        binding.webView.evaluateJavascript(
+            "window.__spotifyWrapperApplyPrefs && window.__spotifyWrapperApplyPrefs();", null
+        )
     }
 
     /** I pulsanti della notifica finiscono qui: esegue il JS nella WebView. */
@@ -486,6 +516,10 @@ class MainActivity : AppCompatActivity() {
         // Se eravamo usciti per pausa utente, al rientro la WebView va riattivata;
         // lo stato play/pause del web player resta quello scelto dall'utente.
         userPausedPlayback = false
+        // Le preferenze possono essere cambiate mentre le impostazioni erano
+        // aperte: al rientro i temi/flag vengono sempre ri-sincronizzati
+        // (idempotente: inject.js rilegge AndroidPrefsBridge.getPrefs()).
+        applyPrefsToPage()
     }
 
     override fun onDestroy() {

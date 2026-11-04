@@ -34,6 +34,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:hardwareAccelerated="true"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.SpotifyWrapper">
@@ -42,6 +43,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Schermata personalizzazione (temi/visibilita' elementi) -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:theme="@style/Theme.SpotifyWrapper" />
 
         <service
             android:name=".MediaPlaybackService"

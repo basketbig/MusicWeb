@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Layout minimale: pulsanti tema + checkbox visibilita'. Nessun design curato. -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_theme_title"
+            android:textStyle="bold"
+            android:paddingBottom="8dp" />
+
+        <Button
+            android:id="@+id/btnThemeDefault"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_theme_default" />
+
+        <Button
+            android:id="@+id/btnThemeAmoled"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_theme_amoled" />
+
+        <Button
+            android:id="@+id/btnThemeViolet"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_theme_violet" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_elements_title"
+            android:textStyle="bold"
+            android:paddingTop="16dp"
+            android:paddingBottom="8dp" />
+
+        <CheckBox
+            android:id="@+id/chkHideNowPlaying"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_hide_now_playing" />
+
+        <CheckBox
+            android:id="@+id/chkHideSidebar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_hide_sidebar" />
+
+        <CheckBox
+            android:id="@+id/chkBiggerFonts"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/settings_bigger_fonts" />
+
+    </LinearLayout>
+</ScrollView>
